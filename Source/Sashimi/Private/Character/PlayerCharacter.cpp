@@ -89,14 +89,13 @@ void APlayerCharacter::Look(const FInputActionValue& aValue)
 void APlayerCharacter::PerformJump()
 {
 	// TODO: obviously change to be _my_ jump
-	Jump();
+	Cast<UDeftMovementComponent>(GetCharacterMovement())->StartJump();
 }
 
 // Called every frame
 void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
-
 }
 
 // Called to bind functionality to input
