@@ -32,15 +32,13 @@ void UDeftMovementComponent::BeginPlay()
 	}
 	else
 		UE_LOG(LogDeftMovement, Error, TEXT("Failed to find valid PhysicsSettings"));
-
-	m_DefaultGravityScaleCache = GravityScale;
 }
 
 void UDeftMovementComponent::TickComponent(float aDeltaTime, enum ELevelTick aTickType, FActorComponentTickFunction* aThisTickFunction)
 {
 	Super::TickComponent(aDeltaTime, aTickType, aThisTickFunction);
 
-	if (m_bInPlatformJump && !m_bJumpApexReached) // TODO: right now we're relying on MOVE_Falling to drive the actual physics state, but we still need to track data while in the jump to know when to change gravity
+	if (m_bInPlatformJump) // TODO: right now we're relying on MOVE_Falling to drive the actual physics state, but we still need to track data while in the jump to know when to change gravity
 	{
 		PhysPlatformJump();
 	}
@@ -78,15 +76,12 @@ bool UDeftMovementComponent::DoJump(bool bReplayingMoves, float DeltaTime)
 			m_PlatformJumpInitialPosition = CharacterOwner->GetActorLocation();
 			m_bInPlatformJump = true;
 
-			m_PlatformJumpApex = 0.f;
-
 			// allows the physx engine to take over and apply gravity over time and automatic collision checks
 			SetMovementMode(MOVE_Falling);
 
 #if DEBUG_VIEW
 			m_PlatformJumpDebug.m_GravityValues.Empty();
 			m_PlatformJumpDebug.m_GravityValues.Add(m_DefaultGravityZCache * GravityScale);
-			m_PlatformJumpDebug.m_GravityValues.Add(m_DefaultGravityZCache * m_PostJumpFallGravity);
 			m_PlatformJumpDebug.m_InitialVelocity = initialVelocity.Z;
 #endif
 			return true;
@@ -107,8 +102,7 @@ void UDeftMovementComponent::OnMovementModeChanged(EMovementMode PreviousMovemen
 		if (m_bInPlatformJump)
 		{
 			m_bInPlatformJump = false;
-			m_bJumpApexReached = false;
-			GravityScale = m_DefaultGravityScaleCache;
+			GravityScale = 1.f;
 		}
 	}
 }
@@ -117,11 +111,11 @@ void UDeftMovementComponent::OnMovementModeChanged(EMovementMode PreviousMovemen
 void UDeftMovementComponent::PhysPlatformJump()
 {
 	// TODO: can probably precalculate this if we need
-	float distanceJumped = FMath::Abs(CharacterOwner->GetActorLocation().Z - m_PlatformJumpInitialPosition.Z);
-	m_PlatformJumpApex = FMath::Max(m_PlatformJumpApex, distanceJumped);
+	FVector distanceJumped = CharacterOwner->GetActorLocation() - m_PlatformJumpInitialPosition;
+	m_PlatformJumpApex = FMath::Min(m_PlatformJumpApex, distanceJumped.Length());
 
 	// indicates we've started falling because our velocity has switched directions or gone from pos to 0
-	if (Velocity.Z < 0.f)
+	if (Velocity.Z < LastUpdateVelocity.Z)
 	{
 		OnJumpApexReached();
 	}
@@ -132,7 +126,6 @@ void UDeftMovementComponent::OnJumpApexReached()
 {
 	if (CVarEnablePostJumpGravity.GetValueOnGameThread())
 	{
-		m_bJumpApexReached = true;
 		GravityScale = m_PostJumpFallGravity;
 #if DEBUG_VIEW
 		m_PlatformJumpDebug.m_GravityValues.Add(m_DefaultGravityZCache * GravityScale);
@@ -144,7 +137,7 @@ void UDeftMovementComponent::OnJumpApexReached()
 FVector UDeftMovementComponent::CalculateJumpInitialVelocity(float aTime, float aHeight)
 {
 	// TODO: return more than just Z
-	return FVector(0.f, 0.f, (2 * aHeight) / aTime);
+	return FVector(0.f, 0.f, (2 * aTime) / aTime);
 }
 
 float UDeftMovementComponent::CalculateJumpGravityScale(float aTime, float aHeight)
@@ -203,18 +196,17 @@ void UDeftMovementComponent::DebugPlatformJump()
 	if (!GEngine)
 		return;
 
-	//for (float gravity : m_PlatformJumpDebug.m_GravityValues)
-	//{
-	//	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::White, FString::Printf(TEXT("\tGravity: %.2f"), gravity));
-	//}
-	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::White, FString::Printf(TEXT("\tGravity Scale: %.2f"), GravityScale));
+	for (float gravity : m_PlatformJumpDebug.m_GravityValues)
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 0.0001, FColor::White, FString::Printf(TEXT("\tGravity: %.2f"), gravity));
+	}
 
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::White, FString::Printf(TEXT("\tJump Apex: %.2f"), m_PlatformJumpApex));
-	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::White, FString::Printf(TEXT("\tJump Initial Pos: %s"), *m_PlatformJumpInitialPosition.ToString()));
+	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::White, FString::Printf(TEXT("\tStarting Pos: %s"), *m_PlatformJumpDebug.m_StartPos.ToString()));
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::White, FString::Printf(TEXT("\tInitial Velocity: %.2f"), m_PlatformJumpDebug.m_InitialVelocity));
 
 	const bool bUsePostJumpGravity = CVarEnablePostJumpGravity.GetValueOnGameThread();
-	GEngine->AddOnScreenDebugMessage(-1, 0.01f, bUsePostJumpGravity ? FColor::Green : FColor::Red, FString::Printf(TEXT("Post Jump Gravity: %s"), bUsePostJumpGravity ? TEXT("Enabled") : TEXT("Disabled")));
+	GEngine->AddOnScreenDebugMessage(-1, 0.01f, bUsePostJumpGravity ? FColor::Green : FColor::Red, FString::Printf(TEXT("Post Jump Gravity: %s"), m_bInPlatformJump ? TEXT("Enabled") : TEXT("Disabled")));
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, m_bInPlatformJump ? FColor::Green : FColor::White, FString::Printf(TEXT("Jump State %s"), m_bInPlatformJump ? TEXT("In Jump") : TEXT("Not Jumping")));
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::Cyan, TEXT("\n-Gravity Scaled Jump-"));
 }

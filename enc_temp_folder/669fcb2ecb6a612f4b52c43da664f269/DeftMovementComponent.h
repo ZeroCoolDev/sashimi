@@ -61,11 +61,9 @@ private:
 	FVector m_PlatformJumpInitialPosition = FVector::ZeroVector;
 	float m_PlatformJumpApex = 0.f;
 	float m_PostJumpFallGravity = 0.f; // different gravity for the second half of the jump (once we pass the apex) which gives a different feel on the way up versus down
-	bool m_bJumpApexReached = false;
 	bool m_bInPlatformJump = false;
 
 	float m_DefaultGravityZCache = 0.f;
-	float m_DefaultGravityScaleCache = 0.f;
 
 #if DEBUG_VIEW
 	void DrawDebug();
@@ -74,6 +72,7 @@ private:
 	void DebugPlatformJump();
 	struct PlatformJumpDebug
 	{
+		FVector			m_StartPos = FVector::ZeroVector;
 		// TODO: need to clear whenever we land or initiate a new jump
 		TArray<float>	m_GravityValues; // there are going to be multiple gravities
 		float			m_InitialVelocity = 0.f;

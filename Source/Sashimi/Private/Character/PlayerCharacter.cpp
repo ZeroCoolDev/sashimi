@@ -89,7 +89,7 @@ void APlayerCharacter::Look(const FInputActionValue& aValue)
 void APlayerCharacter::PerformJump()
 {
 	// TODO: obviously change to be _my_ jump
-	Cast<UDeftMovementComponent>(GetCharacterMovement())->StartJump();
+	Jump();
 }
 
 // Called every frame
@@ -106,7 +106,7 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	if (UEnhancedInputComponent* inputComp = static_cast<UEnhancedInputComponent*>(PlayerInputComponent))
 	{
 		// Jump
-		inputComp->BindAction(JumpAction, ETriggerEvent::Started, this, &APlayerCharacter::Jump);
+		inputComp->BindAction(JumpAction, ETriggerEvent::Started, this, &APlayerCharacter::PerformJump);
 		//inputComp->BindAction(JumpAction, ETriggerEvent::Completed, this, &AJakCharacter::StopJumpProxy);
 
 		// 

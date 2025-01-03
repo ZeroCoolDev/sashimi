@@ -8,16 +8,6 @@
 
 #include "PlayerCharacter.generated.h"
 
-namespace CustomMovement
-{
-	UENUM(BlueprintType)
-	enum ECustomMovementMode
-	{
-		CMOVE_Jump	UMETA(DisplayName="Custom Jump"),
-		CMOVE_Max	UMETA(Hidden)
-	};
-};
-
 UCLASS()
 class SASHIMI_API APlayerCharacter : public ACharacter
 {
