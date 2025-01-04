@@ -28,7 +28,8 @@ protected:
 
 	void Move(const FInputActionValue& aValue);
 	void Look(const FInputActionValue& aValue);
-	void PerformJump();
+	void OnJumpPressed();
+	void OnJumpReleased();
 
 protected:
 

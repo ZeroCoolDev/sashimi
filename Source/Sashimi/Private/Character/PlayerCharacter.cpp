@@ -55,7 +55,6 @@ void APlayerCharacter::BeginPlay()
 void APlayerCharacter::Move(const FInputActionValue& aValue)
 {
 	FVector2D inputVector = aValue.Get<FVector2D>();
-	UE_LOG(LogTemp, Warning, TEXT("%s"), *inputVector.ToString());
 	// TODO: add custom player controller
 	if (Controller)
 	{
@@ -86,10 +85,23 @@ void APlayerCharacter::Look(const FInputActionValue& aValue)
 }
 
 
-void APlayerCharacter::PerformJump()
+void APlayerCharacter::OnJumpPressed()
 {
 	// TODO: obviously change to be _my_ jump
 	Jump();
+	if (UDeftMovementComponent* deftCharacterMovementComponent = Cast<UDeftMovementComponent>(GetCharacterMovement()))
+	{
+		deftCharacterMovementComponent->OnJumpPressed(); // tell the movement component to start counting the time
+	}
+}
+
+void APlayerCharacter::OnJumpReleased()
+{
+	// TODO: obviously change to be _my_ jump
+	if (UDeftMovementComponent* deftCharacterMovementComponent = Cast<UDeftMovementComponent>(GetCharacterMovement()))
+	{
+		deftCharacterMovementComponent->OnJumpReleased(); // tell the movement component to stop counting the time
+	}
 }
 
 // Called every frame
@@ -106,8 +118,8 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 	if (UEnhancedInputComponent* inputComp = static_cast<UEnhancedInputComponent*>(PlayerInputComponent))
 	{
 		// Jump
-		inputComp->BindAction(JumpAction, ETriggerEvent::Started, this, &APlayerCharacter::PerformJump);
-		//inputComp->BindAction(JumpAction, ETriggerEvent::Completed, this, &AJakCharacter::StopJumpProxy);
+		inputComp->BindAction(JumpAction, ETriggerEvent::Started, this, &APlayerCharacter::OnJumpPressed);
+		inputComp->BindAction(JumpAction, ETriggerEvent::Completed, this, &APlayerCharacter::OnJumpReleased);
 
 		// 
 		inputComp->BindAction(MoveAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Move);

@@ -13,6 +13,7 @@ static TAutoConsoleVariable<bool> CVarDebugJump(TEXT("d.DebugJump"), false, TEXT
 // FEATURE TOGGLES
 static TAutoConsoleVariable<bool> CVarUseUEJump(TEXT("d.UseUEJump"), false, TEXT("if enabled use the default UE5 jump physics"));
 static TAutoConsoleVariable<bool> CVarEnablePostJumpGravity(TEXT("d.EnablePostJumpGravity"), true, TEXT("if enabled use a different post jump gravity"));
+static TAutoConsoleVariable<bool> CVarTestVariableJump(TEXT("d.TestVariableJump"), false, TEXT("spamspam"));
 
 DEFINE_LOG_CATEGORY(LogDeftMovement);
 
@@ -32,15 +33,25 @@ void UDeftMovementComponent::BeginPlay()
 	}
 	else
 		UE_LOG(LogDeftMovement, Error, TEXT("Failed to find valid PhysicsSettings"));
+
+	m_DefaultGravityScaleCache = GravityScale;
+
+	m_MaxJumpGravityScale = CalculateJumpGravityScale(TimeToJumpMaxHeight, JumpMaxHeight);
+	// We need to scale time by the same factor as height since
+	// if it takes 1s to reach 4m, then it would take 0.5s to reach 2m
+	// so if the max height is 4m in 1s, and the min height is 2m we shouldn't use gravity that takes us to 2m over 1s, it should take us 0.5s instead
+	float timeScale = JumpMaxHeight / JumpMinHeight;
+	m_MinJumpGravityScale = CalculateJumpGravityScale(TimeToJumpMaxHeight / timeScale, JumpMinHeight);
+
 }
 
 void UDeftMovementComponent::TickComponent(float aDeltaTime, enum ELevelTick aTickType, FActorComponentTickFunction* aThisTickFunction)
 {
 	Super::TickComponent(aDeltaTime, aTickType, aThisTickFunction);
 
-	if (m_bInPlatformJump) // TODO: right now we're relying on MOVE_Falling to drive the actual physics state, but we still need to track data while in the jump to know when to change gravity
+	if (m_bInPlatformJump && !m_bJumpApexReached) // TODO: right now we're relying on MOVE_Falling to drive the actual physics state, but we still need to track data while in the jump to know when to change gravity
 	{
-		PhysPlatformJump();
+		PhysPlatformJump(aDeltaTime);
 	}
 
 #if DEBUG_VIEW
@@ -48,7 +59,7 @@ void UDeftMovementComponent::TickComponent(float aDeltaTime, enum ELevelTick aTi
 #endif
 }
 
-
+static float testSwitchAtHalf;
 bool UDeftMovementComponent::DoJump(bool bReplayingMoves, float DeltaTime)
 {
 	if (CVarUseUEJump.GetValueOnGameThread())
@@ -66,15 +77,21 @@ bool UDeftMovementComponent::DoJump(bool bReplayingMoves, float DeltaTime)
 			// Apply instantaneous velocity and new gravity scale
 			FVector initialVelocity = CalculateJumpInitialVelocity(TimeToJumpMaxHeight, JumpMaxHeight);
 			Velocity.Z = initialVelocity.Z;
+			
 			GravityScale = CalculateJumpGravityScale(TimeToJumpMaxHeight, JumpMaxHeight);
 
 			// Prepare secondary gravity
-			m_PostJumpFallGravity = CalculateJumpGravityScale(PostTimeToJumpMaxHeight, PostJumpMaxHeight);
+			m_PostJumpFallGravity = CalculateJumpGravityScale(PostTimeToJumpMaxHeight, TimeToJumpMaxHeight);
 
 			// TODO: check if horizontal velocity is fine
 
 			m_PlatformJumpInitialPosition = CharacterOwner->GetActorLocation();
 			m_bInPlatformJump = true;
+
+			m_PlatformJumpApex = 0.f;
+
+			//spamspam
+			testSwitchAtHalf = JumpMaxHeight / 2.f; // at half the height we're going to switch to a different gravity, then switch back to the original
 
 			// allows the physx engine to take over and apply gravity over time and automatic collision checks
 			SetMovementMode(MOVE_Falling);
@@ -82,6 +99,7 @@ bool UDeftMovementComponent::DoJump(bool bReplayingMoves, float DeltaTime)
 #if DEBUG_VIEW
 			m_PlatformJumpDebug.m_GravityValues.Empty();
 			m_PlatformJumpDebug.m_GravityValues.Add(m_DefaultGravityZCache * GravityScale);
+			m_PlatformJumpDebug.m_GravityValues.Add(m_DefaultGravityZCache * m_PostJumpFallGravity);
 			m_PlatformJumpDebug.m_InitialVelocity = initialVelocity.Z;
 #endif
 			return true;
@@ -102,20 +120,58 @@ void UDeftMovementComponent::OnMovementModeChanged(EMovementMode PreviousMovemen
 		if (m_bInPlatformJump)
 		{
 			m_bInPlatformJump = false;
-			GravityScale = 1.f;
+			m_bJumpApexReached = false;
+			GravityScale = m_DefaultGravityScaleCache;
 		}
 	}
 }
 
 
-void UDeftMovementComponent::PhysPlatformJump()
+void UDeftMovementComponent::OnJumpPressed()
+{
+	m_JumpKeyHoldTime = 0.f;
+	m_bIncrementJumpInputHoldTime = true;
+}
+
+
+void UDeftMovementComponent::OnJumpReleased()
+{
+	// apply a new gravity scale based on time held
+	if (m_bIncrementJumpInputHoldTime)
+	{
+		// Only switch to gravity if we need to
+		m_bIncrementJumpInputHoldTime = false;
+
+		// ex: max time is 2s, we hold for 1s, we get 1/2s = 0.5 == 50% of the max jump
+		// ex: max time is 2s, min time is 1s, we hold for 0.2s, we _should_ get 0.2/2s = 0.1 == 10% of the jump
+		float val = FMath::Clamp(m_JumpKeyHoldTime / JumpKeyMaxHoldTime, 0.f, 1.f);
+
+		// val == 1 that means we held it max time and shouldn't change gravity at all.
+		// val == 0 means we want the min height (more gravity applied)
+		// x in [a,b] to [c,d] = (x-a) / (b-a) * (d - c) + c
+		// x		= val
+		// [a,b]	= [0,1]
+		// [c,d]	= [minJumpGrav, maxJumpGrav]
+
+		float gravityScaledByInput = (val * (m_MaxJumpGravityScale - m_MinJumpGravityScale)) + m_MinJumpGravityScale;
+		UE_LOG(LogDeftMovement, Warning, TEXT("gravityScaledByInput: %.2f"), gravityScaledByInput);
+		GravityScale = gravityScaledByInput;
+	}
+}
+
+void UDeftMovementComponent::PhysPlatformJump(float aDeltaTime)
 {
 	// TODO: can probably precalculate this if we need
-	FVector distanceJumped = CharacterOwner->GetActorLocation() - m_PlatformJumpInitialPosition;
-	m_PlatformJumpApex = FMath::Min(m_PlatformJumpApex, distanceJumped.Length());
+	float distanceJumped = FMath::Abs(CharacterOwner->GetActorLocation().Z - m_PlatformJumpInitialPosition.Z);
+	m_PlatformJumpApex = FMath::Max(m_PlatformJumpApex, distanceJumped);
+
+	if (m_bIncrementJumpInputHoldTime)
+	{
+		m_JumpKeyHoldTime += aDeltaTime;
+	}
 
 	// indicates we've started falling because our velocity has switched directions or gone from pos to 0
-	if (Velocity.Z < LastUpdateVelocity.Z)
+	if (Velocity.Z < 0.f)
 	{
 		OnJumpApexReached();
 	}
@@ -126,7 +182,12 @@ void UDeftMovementComponent::OnJumpApexReached()
 {
 	if (CVarEnablePostJumpGravity.GetValueOnGameThread())
 	{
+		m_bJumpApexReached = true;
 		GravityScale = m_PostJumpFallGravity;
+
+		m_bIncrementJumpInputHoldTime = false;
+		m_JumpKeyHoldTime = 0.f;
+
 #if DEBUG_VIEW
 		m_PlatformJumpDebug.m_GravityValues.Add(m_DefaultGravityZCache * GravityScale);
 #endif
@@ -137,7 +198,7 @@ void UDeftMovementComponent::OnJumpApexReached()
 FVector UDeftMovementComponent::CalculateJumpInitialVelocity(float aTime, float aHeight)
 {
 	// TODO: return more than just Z
-	return FVector(0.f, 0.f, (2 * aTime) / aTime);
+	return FVector(0.f, 0.f, (2 * aHeight) / aTime);
 }
 
 float UDeftMovementComponent::CalculateJumpGravityScale(float aTime, float aHeight)
@@ -196,17 +257,16 @@ void UDeftMovementComponent::DebugPlatformJump()
 	if (!GEngine)
 		return;
 
-	for (float gravity : m_PlatformJumpDebug.m_GravityValues)
-	{
-		GEngine->AddOnScreenDebugMessage(-1, 0.0001, FColor::White, FString::Printf(TEXT("\tGravity: %.2f"), gravity));
-	}
+	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::White, FString::Printf(TEXT("\tMin Gravity Scale: %.2f"), m_MinJumpGravityScale));
+	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::White, FString::Printf(TEXT("\tMax Gravity Scale: %.2f"), m_MaxJumpGravityScale));
+	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::White, FString::Printf(TEXT("\tGravity Scale: %.2f"), GravityScale));
 
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::White, FString::Printf(TEXT("\tJump Apex: %.2f"), m_PlatformJumpApex));
-	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::White, FString::Printf(TEXT("\tStarting Pos: %s"), *m_PlatformJumpDebug.m_StartPos.ToString()));
+	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::White, FString::Printf(TEXT("\tJump Initial Pos: %s"), *m_PlatformJumpInitialPosition.ToString()));
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::White, FString::Printf(TEXT("\tInitial Velocity: %.2f"), m_PlatformJumpDebug.m_InitialVelocity));
 
 	const bool bUsePostJumpGravity = CVarEnablePostJumpGravity.GetValueOnGameThread();
-	GEngine->AddOnScreenDebugMessage(-1, 0.01f, bUsePostJumpGravity ? FColor::Green : FColor::Red, FString::Printf(TEXT("Post Jump Gravity: %s"), m_bInPlatformJump ? TEXT("Enabled") : TEXT("Disabled")));
+	GEngine->AddOnScreenDebugMessage(-1, 0.01f, bUsePostJumpGravity ? FColor::Green : FColor::Red, FString::Printf(TEXT("Post Jump Gravity: %s"), bUsePostJumpGravity ? TEXT("Enabled") : TEXT("Disabled")));
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, m_bInPlatformJump ? FColor::Green : FColor::White, FString::Printf(TEXT("Jump State %s"), m_bInPlatformJump ? TEXT("In Jump") : TEXT("Not Jumping")));
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::Cyan, TEXT("\n-Gravity Scaled Jump-"));
 }
