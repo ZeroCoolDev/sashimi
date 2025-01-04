@@ -9,6 +9,9 @@
 
 #include "PlayerCharacter.generated.h"
 
+//DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnJumpPressed);
+//DECLARE_DYNAMIC_MULTICAST_DELEGATE(FOnJumpReleased);
+
 UCLASS()
 class SASHIMI_API APlayerCharacter : public ACharacter
 {
@@ -19,6 +22,7 @@ public:
 	APlayerCharacter(const FObjectInitializer& aObjectInitializer);
 
 	virtual void Tick(float DeltaTime) override;
+	virtual void Jump() override;
 
 	// Called to bind functionality to input
 	virtual void SetupPlayerInputComponent(class UInputComponent* PlayerInputComponent) override;
@@ -54,6 +58,7 @@ protected:
 	class UInputAction* LookAction;
 
 private:
+	bool m_bIsInJump = false;
 #if DEBUG_VIEW
 	void DrawDebug();
 	FVector2D m_MoveInputVector;

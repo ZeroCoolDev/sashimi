@@ -74,20 +74,12 @@ bool UDeftMovementComponent::DoJump(bool bReplayingMoves, float DeltaTime)
 		// Don't jump if we can't move up/down.
 		if (!bConstrainToPlane || !FMath::IsNearlyEqual(FMath::Abs(GetGravitySpaceZ(PlaneConstraintNormal)), 1.f))
 		{
-			// Don't allow double jump with positive velocity
-			if (m_bInPlatformJump && !m_bJumpApexReached)
-				return false;
-
 			//TODO: we don't care if we're in mid air or not, just make a function to get a different parabola if need be			
 			FVector initialVelocity = CalculateJumpInitialVelocity(TimeToJumpMaxHeight, JumpMaxHeight);
 			float gravityScale = m_MaxPreJumpGravityScale;
 			if (IsAttemptingDoubleJump())
 			{
-				// only add extra velocity if we're headed downwards
-				if (Velocity.Z < 0)
-				{
-					initialVelocity.Z += -Velocity.Z; // I want a double jump to always cover (for ex) 2m. The velocity we calculate is assuming we're starting at 0 velocity, but if we're already falling we might have a large negative velocity
-				}
+				initialVelocity.Z += -Velocity.Z;
 				gravityScale = m_MinPreJumpGravityScale;
 			}
 			Velocity.Z = initialVelocity.Z;
@@ -99,9 +91,7 @@ bool UDeftMovementComponent::DoJump(bool bReplayingMoves, float DeltaTime)
 			m_bJumpApexReached = false;
 
 			// TODO: these are really debug...
-			// For now I want to combine double jumps so we see the highest apex ever, not each individual parabola
-			if (!IsAttemptingDoubleJump())
-				m_PlatformJumpInitialPosition = CharacterOwner->GetActorLocation();
+			m_PlatformJumpInitialPosition = CharacterOwner->GetActorLocation();
 			m_PlatformJumpApex = 0.f;
 
 #if DEBUG_VIEW
