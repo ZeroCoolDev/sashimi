@@ -4,13 +4,12 @@
 
 #include "CoreMinimal.h"
 #include "GameFramework/CharacterMovementComponent.h"
+#include "Sashimi/Sashimi.h"
 #include "DeftMovementComponent.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogDeftMovement, Log, All);
 
-#ifndef DEBUG_VIEW
-#define DEBUG_VIEW !UE_BUILD_SHIPPING
-#endif
+
 namespace CustomMovement
 {
 	UENUM(BlueprintType)
@@ -36,6 +35,7 @@ public:
 	virtual void TickComponent(float aDeltaTime, enum ELevelTick aTickType, FActorComponentTickFunction* aThisTickFunction) override;
 	virtual bool DoJump(bool bReplayingMoves, float DeltaTime) override;
 	virtual void OnMovementModeChanged(EMovementMode PreviousMovementMode, uint8 PreviousCustomMode) override;
+	virtual bool CanAttemptJump() const override;
 
 	void OnJumpPressed();
 	void OnJumpReleased();
@@ -52,15 +52,19 @@ protected:
 	// Max Jump height if the player holds the button the required max time
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Jump Control | Pre Jump", meta=(ToolTip="Maximum jump height [hold button max time] (cm)"))
 	float JumpMaxHeight;
+	
+	// Time it takes to reach max jump height.
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Jump Control | Pre Jump", meta=(ToolTip="Time it takes to reach the maximum jump height"))
 	float TimeToJumpMaxHeight;
+	
 	// Min Jump height if the player releases button before required max time
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Jump Control | Pre Jump", meta=(ToolTip="Maximum jump height [hold button max time] (cm)"))
 	float JumpMinHeight;
-	// Used to calculate a different gravity for falling after a jump
-	// TODO: This gravity will have to be used for the character's normal gravity scale so it's consistent if you step off a ledge without jumping
+	
+	// Used to calculate a different gravity for falling after a jump, the same JumpMaxHeight is used for consistent height
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Jump Control | Post Jump", meta=(ToolTip="Time it takes to reach the maximum jump height"))
 	float PostTimeToJumpMaxHeight;
+	
 	// How long jump button must be pressed to achieve MaximumJumpHeight
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Jump Control | Variable Jump", meta=(ToolTip="Maximum hold time needed to achieve maximum jump height (cm)"))
 	float JumpKeyMaxHoldTime;

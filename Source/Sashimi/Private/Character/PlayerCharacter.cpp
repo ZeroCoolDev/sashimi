@@ -6,6 +6,9 @@
 #include "EnhancedInputSubsystems.h"
 #include "EnhancedInputComponent.h"
 
+// DEBUG VISUALIZATION
+static TAutoConsoleVariable<bool> CVarDebugInput(TEXT("d.DebugInput"), false, TEXT("shows debug info for input"));
+
 // Sets default values
 APlayerCharacter::APlayerCharacter(const FObjectInitializer& aObjectInitializer)
 : Super(aObjectInitializer.SetDefaultSubobjectClass<UDeftMovementComponent>(ACharacter::CharacterMovementComponentName))
@@ -55,6 +58,10 @@ void APlayerCharacter::BeginPlay()
 void APlayerCharacter::Move(const FInputActionValue& aValue)
 {
 	FVector2D inputVector = aValue.Get<FVector2D>();
+#if DEBUG_VIEW
+	m_MoveInputVector = inputVector;
+#endif
+
 	// TODO: add custom player controller
 	if (Controller)
 	{
@@ -108,6 +115,9 @@ void APlayerCharacter::OnJumpReleased()
 void APlayerCharacter::Tick(float DeltaTime)
 {
 	Super::Tick(DeltaTime);
+#if DEBUG_VIEW
+	DrawDebug();
+#endif
 }
 
 // Called to bind functionality to input
@@ -129,4 +139,14 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 		inputComp->BindAction(LookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
 	}
 }
+
+#if DEBUG_VIEW
+void APlayerCharacter::DrawDebug()
+{
+	if (CVarDebugInput.GetValueOnGameThread())
+	{
+		GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::Yellow, FString::Printf(TEXT("Forward/Back: %2.f\nRight/Left: %.2f"), m_MoveInputVector.Y, m_MoveInputVector.X));
+	}
+}
+#endif
 

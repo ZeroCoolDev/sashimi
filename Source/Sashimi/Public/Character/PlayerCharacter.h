@@ -5,6 +5,7 @@
 #include "CoreMinimal.h"
 #include "GameFramework/Character.h"
 #include "InputActionValue.h"
+#include "Sashimi/Sashimi.h"
 
 #include "PlayerCharacter.generated.h"
 
@@ -51,5 +52,10 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input)
 	class UInputAction* LookAction;
-	
+
+private:
+#if DEBUG_VIEW
+	void DrawDebug();
+	FVector2D m_MoveInputVector;
+#endif	
 };

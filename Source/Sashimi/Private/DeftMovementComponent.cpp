@@ -119,6 +119,11 @@ void UDeftMovementComponent::OnMovementModeChanged(EMovementMode PreviousMovemen
 }
 
 
+bool UDeftMovementComponent::CanAttemptJump() const
+{
+	return Super::CanAttemptJump();
+}
+
 void UDeftMovementComponent::OnJumpPressed()
 {
 	m_JumpKeyHoldTime = 0.f;
