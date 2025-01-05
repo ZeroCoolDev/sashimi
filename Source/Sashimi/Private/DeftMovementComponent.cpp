@@ -74,22 +74,22 @@ bool UDeftMovementComponent::DoJump(bool bReplayingMoves, float DeltaTime)
 		// Don't jump if we can't move up/down.
 		if (!bConstrainToPlane || !FMath::IsNearlyEqual(FMath::Abs(GetGravitySpaceZ(PlaneConstraintNormal)), 1.f))
 		{
-			// Don't allow double jump with positive velocity
-			if (m_bInPlatformJump && !m_bJumpApexReached)
-				return false;
+			//// Don't allow double jump with positive velocity
+			//if (m_bInPlatformJump && !m_bJumpApexReached)
+			//	return false;
 
 			//TODO: we don't care if we're in mid air or not, just make a function to get a different parabola if need be			
 			FVector initialVelocity = CalculateJumpInitialVelocity(TimeToJumpMaxHeight, JumpMaxHeight);
 			float gravityScale = m_MaxPreJumpGravityScale;
-			if (IsAttemptingDoubleJump())
-			{
-				// only add extra velocity if we're headed downwards
-				if (Velocity.Z < 0)
-				{
-					initialVelocity.Z += -Velocity.Z; // I want a double jump to always cover (for ex) 2m. The velocity we calculate is assuming we're starting at 0 velocity, but if we're already falling we might have a large negative velocity
-				}
-				gravityScale = m_MinPreJumpGravityScale;
-			}
+			//if (IsAttemptingDoubleJump())
+			//{
+			//	// only add extra velocity if we're headed downwards
+			//	if (Velocity.Z < 0)
+			//	{
+			//		initialVelocity.Z += -Velocity.Z; // I want a double jump to always cover (for ex) 2m. The velocity we calculate is assuming we're starting at 0 velocity, but if we're already falling we might have a large negative velocity
+			//	}
+			//	gravityScale = m_MinPreJumpGravityScale;
+			//}
 			Velocity.Z = initialVelocity.Z;
 			GravityScale = gravityScale;
 
@@ -137,19 +137,24 @@ void UDeftMovementComponent::OnMovementModeChanged(EMovementMode PreviousMovemen
 
 bool UDeftMovementComponent::CanAttemptJump() const
 {
+	// TODO: other types of aerial moves should reset the jump ability like a mid air kick or dash you should be able to perform a jump after perhaps
+ 
 	// Allows coyote time for a short distance after true falling occurs 
-	const bool isTrueFalling = m_bIsFallOriginSet;
-	float distanceFallen = FMath::Abs(m_FallOrigin.Z - CharacterOwner->GetActorLocation().Z);
-	
-	return	Super::CanAttemptJump() && 
+	if (m_FallDistanceJumpThreshold > 0)
+	{
+		float distanceFallen = FMath::Abs(m_FallOrigin.Z - CharacterOwner->GetActorLocation().Z);
+		return	Super::CanAttemptJump() &&
 			(!IsAttemptingDoubleJump() || distanceFallen <= m_FallDistanceJumpThreshold);
+	}
+
+	return	Super::CanAttemptJump();
 }
 
 void UDeftMovementComponent::OnJumpPressed()
 {
 	// we don't want variable jump for double jumps
-	if (IsAttemptingDoubleJump())
-		return;
+	//if (IsAttemptingDoubleJump())
+	//	return;
 
 	m_JumpKeyHoldTime = 0.f;
 	m_bIncrementJumpInputHoldTime = true;
@@ -158,8 +163,8 @@ void UDeftMovementComponent::OnJumpPressed()
 void UDeftMovementComponent::OnJumpReleased()
 {
 	// we don't want variable jump for double jumps
-	if (IsAttemptingDoubleJump())
-		return;
+	//if (IsAttemptingDoubleJump())
+	//	return;
 
 	// apply a new gravity scale based on time held
 	if (m_bIncrementJumpInputHoldTime)
