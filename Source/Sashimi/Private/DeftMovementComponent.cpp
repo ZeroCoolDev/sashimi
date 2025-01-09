@@ -5,6 +5,8 @@
 #include "GameFramework/Character.h"
 #include "Components/CapsuleComponent.h"
 #include "PhysicsEngine/PhysicsSettings.h"
+#include "Character/PlayerCharacter.h"
+#include "CollisionQueryParams.h"
 
 // DEBUG VISUALIZATION
 static TAutoConsoleVariable<bool> CVarDebugLocomotion(TEXT("d.DebugMovement"), false, TEXT("shows debug info for movement"));
@@ -16,6 +18,7 @@ static TAutoConsoleVariable<bool> CVarEnablePostJumpGravity(TEXT("d.EnablePostJu
 static TAutoConsoleVariable<bool> CVarTestVariableJump(TEXT("d.TestVariableJump"), false, TEXT("spamspam"));
 
 DEFINE_LOG_CATEGORY(LogDeftMovement);
+DEFINE_LOG_CATEGORY(LogDeftLedge)
 
 UDeftMovementComponent::UDeftMovementComponent()
 {
@@ -43,6 +46,12 @@ void UDeftMovementComponent::BeginPlay()
 	float timeScale = JumpMaxHeight / JumpMinHeight;
 	m_MinPreJumpGravityScale = CalculateJumpGravityScale(TimeToJumpMaxHeight / timeScale, JumpMinHeight);
 	m_PostJumpGravityScale = CalculateJumpGravityScale(PostTimeToJumpMaxHeight, JumpMaxHeight);
+
+	m_CollisionQueryParams.AddIgnoredActor(GetOwner());
+	const UCapsuleComponent* capsuleComponent = Cast<ACharacter>(GetOwner())->GetCapsuleComponent();
+	m_CapsuleCollisionShapeCache = FCollisionShape::MakeCapsule(capsuleComponent->GetScaledCapsuleRadius(), capsuleComponent->GetScaledCapsuleHalfHeight());
+
+	m_SphereCollisionShape = FCollisionShape::MakeSphere(10.f);
 }
 
 void UDeftMovementComponent::TickComponent(float aDeltaTime, enum ELevelTick aTickType, FActorComponentTickFunction* aThisTickFunction)
@@ -198,6 +207,15 @@ void UDeftMovementComponent::PhysFalling(float aDeltaTime, int32 aIterations)
 		m_bIsFallOriginSet = true;
 		m_FallOrigin = CharacterOwner->GetActorLocation();
 	}
+
+	// if velocity is negative (or we're post apex) and there is a ledge grab, grab it
+	//		currently holding a ledge and jump or (maybe) forward is pressed hop up
+	// if velocity is positive
+	//		holding jump key: hop up
+	//		not holding jump key: do nothing
+	FindLedge();
+
+	// TODO: implement wall run up which will also trigger an automatic hop up at the top of ledges
 }
 
 
@@ -233,6 +251,186 @@ void UDeftMovementComponent::PhysPlatformJump(float aDeltaTime)
 	}
 }
 
+
+bool UDeftMovementComponent::FindLedge()
+{
+	FVector wallLocation;
+	if (!CheckForWall(wallLocation))
+		return false;
+
+	FVector heightDistance;
+	if (!CheckForLedge(wallLocation, heightDistance))
+		return false;
+
+	FVector ledgeSurfaceLocation, ledgeSurfaceNormal;
+	if (!CheckLedgeSurface(heightDistance, ledgeSurfaceLocation, ledgeSurfaceNormal))
+		return false;
+
+	// Regardless if there's space I want to know where the edge is
+	FVector ledgeEdgeLocation;
+	GetLedgeEdge(ledgeSurfaceLocation, ledgeSurfaceNormal, wallLocation, ledgeEdgeLocation);
+
+	if (!CheckSpaceForCapsule(ledgeSurfaceLocation))
+		return false;
+
+	FVector hopUpLocation;
+	GetHopUpLocation(ledgeEdgeLocation, hopUpLocation);
+
+	return true;
+}
+
+bool UDeftMovementComponent::CheckForWall(FVector& outWallLocation)
+{
+	// inside actor capsule at half height
+	const FVector wallRayStart = CharacterOwner->GetActorLocation();
+	// extending in forward direction outwards
+	const FVector wallRayEnd = wallRayStart + CharacterOwner->GetActorForwardVector() * WallReach;
+
+	// default to max reach in case we don't hit anything
+	outWallLocation = wallRayEnd;
+
+
+	FHitResult wallHit;
+	const bool bHitWall = GetWorld()->LineTraceSingleByProfile(wallHit, wallRayStart, wallRayEnd, CharacterOwner->GetCapsuleComponent()->GetCollisionProfileName(), m_CollisionQueryParams);
+	if (bHitWall)
+	{
+		// if we hit something that means there is a wall in front of us
+		outWallLocation = wallHit.Location;
+		DrawDebugLine(GetWorld(), wallRayStart,  wallRayEnd, FColor::Green);
+		DrawDebugSphere(GetWorld(), wallHit.Location, 5.f, 12, FColor::Blue);
+		UE_VLOG_SEGMENT(this, LogDeftLedge, Log, wallRayStart, wallRayEnd, FColor::Green, TEXT("Wall Reach"));
+		UE_VLOG_LOCATION(this, LogDeftLedge, Log, outWallLocation, 5.f, FColor::Green, TEXT("Wall hit location"));
+		return true;
+	}
+
+	DrawDebugLine(GetWorld(), wallRayStart, wallRayEnd, FColor::Red);
+	UE_VLOG_SEGMENT(this, LogDeftLedge, Log, wallRayStart, wallRayEnd, FColor::Red, TEXT("Wall Reach"));
+	return false;
+}
+
+bool UDeftMovementComponent::CheckForLedge(const FVector& aWallLocation, FVector& outHeightDistance)
+{
+	const FVector heightRayStart = CharacterOwner->GetActorLocation() + (CharacterOwner->GetActorUpVector() * LedgeHeightOrigin);
+	const FVector heightRayEnd = heightRayStart + CharacterOwner->GetActorForwardVector() * LedgeHeightForwardReach;
+
+	// we want this to be the max distance to make sure there is a ledge beneath that's at least wide enough for the character to stand
+	outHeightDistance = heightRayEnd;
+
+	FHitResult wallHit;
+	const bool bHitAnything = GetWorld()->LineTraceSingleByProfile(wallHit, heightRayStart, heightRayEnd, CharacterOwner->GetCapsuleComponent()->GetCollisionProfileName(), m_CollisionQueryParams);
+	if (!bHitAnything)
+	{
+		// no hit means open space above the player which indicates a ledge
+		UE_VLOG_SEGMENT(this, LogDeftLedge, Log, heightRayStart, heightRayEnd, FColor::Green, TEXT("Space Reach"));
+		return true;
+	}
+
+	// if we hit something there is no open space above the player so there is no ledge
+	UE_VLOG_SEGMENT(this, LogDeftLedge, Log, heightRayStart, heightRayEnd, FColor::Red, TEXT("Space Reach"));
+	UE_VLOG_LOCATION(this, LogDeftLedge, Log, wallHit.Location, 5.f, FColor::Red, TEXT("Space hit location"));
+	return false;
+}
+
+bool UDeftMovementComponent::CheckLedgeSurface(const FVector& aFloorCheckHeightOrigin, FVector& outFloorLocation, FVector& outFloorNormal)
+{
+	const FVector floorRayStart = aFloorCheckHeightOrigin;
+	const FVector floorRayEnd = floorRayStart - CharacterOwner->GetActorUpVector() * LedgeHeightOrigin * 2; // check for a floor twice as far just to see if we hit something
+
+	// default to max reach distance in case we don't hit anything
+	outFloorLocation = floorRayEnd;
+	outFloorNormal = FVector::ZeroVector;
+
+	FHitResult floorHit;
+	const bool bHitFloor = GetWorld()->LineTraceSingleByProfile(floorHit, floorRayStart, floorRayEnd, CharacterOwner->GetCapsuleComponent()->GetCollisionProfileName(), m_CollisionQueryParams);
+	if (bHitFloor)
+	{
+		// hitting the floor means there is a ledge at least wide enough for us to stand on
+		outFloorLocation = floorHit.Location;
+		outFloorNormal = floorHit.Normal;
+		UE_VLOG_SEGMENT(this, LogDeftLedge, Log, floorRayStart, floorRayEnd, FColor::Green, TEXT("Floor Reach"));
+		UE_VLOG_LOCATION(this, LogDeftLedge, Log, outFloorLocation, 5.f, FColor::Green, TEXT("Floor hit location"));
+		return true;
+	}
+
+	UE_VLOG_SEGMENT(this, LogDeftLedge, Log, floorRayStart, floorRayEnd, FColor::Red, TEXT("Floor Reach"));
+	return false;
+
+	// TODO: check surface normal maybe
+}
+
+
+bool UDeftMovementComponent::CheckSpaceForCapsule(const FVector& aFloorLocation)
+{
+	const UCapsuleComponent* capsuleComponent = CharacterOwner->GetCapsuleComponent();
+	const float capsuleHalfHeight = capsuleComponent->GetScaledCapsuleHalfHeight();
+
+	// shape sweep needs to physically sweep _some_ distance, it can't be exactly the same.
+	const FVector capsuleBase = aFloorLocation + CharacterOwner->GetActorUpVector().GetSafeNormal() * 1.5f;				// start sweep: floor location raised by a tiny amount so we don't collide with the floor
+	const FVector capsuleBaseSlightlyHigher = capsuleBase + CharacterOwner->GetActorUpVector().GetSafeNormal() * 1.5f;	// end sweep: slightly above the start location again just because UE requires it to be different
+
+	// Vizlog specifies the BASE location of the capsule
+	//UE_VLOG_CAPSULE(this, LogDeftLedge, Log, capsuleBase, capsuleComponent->GetScaledCapsuleHalfHeight(), capsuleComponent->GetScaledCapsuleRadius(), CharacterOwner->GetActorRotation().Quaternion(), FColor::White, TEXT("Space Sweep Start"));
+	//UE_VLOG_CAPSULE(this, LogDeftLedge, Log, capsuleBaseSlightlyHigher, capsuleComponent->GetScaledCapsuleHalfHeight(), capsuleComponent->GetScaledCapsuleRadius(), CharacterOwner->GetActorRotation().Quaternion(), FColor::Yellow, TEXT("Space Sweep End"));
+
+	FHitResult hitAnything;
+	// sweep puts the CENTER of the capsule at the start and end locations so we have to raise them by half height to have the BASE be at the start and end height
+	const bool bHitAnything = GetWorld()->SweepSingleByProfile(hitAnything, capsuleBase + capsuleHalfHeight, capsuleBaseSlightlyHigher + capsuleHalfHeight, CharacterOwner->GetActorRotation().Quaternion(), CharacterOwner->GetCapsuleComponent()->GetCollisionProfileName(), m_CapsuleCollisionShapeCache, m_CollisionQueryParams);
+	if (!bHitAnything)
+	{
+		// not hitting anything means there's enough space for the character's capsule with a little wiggle room
+		UE_VLOG(this, LogDeftLedge, Log, TEXT("CheckSpaceForCapsule: Player will fit"));
+		return true;
+	}
+
+	// hitting something indicates there's not enough space to stand so no ledge up
+	// TODO: could still indicate a ledge hang maybe
+	UE_VLOG(this, LogDeftLedge, Log, TEXT("CheckSpaceForCapsule: Colliding with %s"), *hitAnything.GetActor()->GetActorNameOrLabel());
+	UE_VLOG_LOCATION(this, LogDeftLedge, Log, hitAnything.Location, 5.f, FColor::Red, TEXT("Space Check Collision"));
+	return false;
+}
+
+
+void UDeftMovementComponent::GetLedgeEdge(const FVector& aFloorLocation, const FVector& aFloorNormal, FVector& aWallLocation, FVector& outLedgeEdge)
+{
+	// starting from the floor location
+	// find a vector perpendicular to the floor's normal which should give us the surface
+	const FVector dirFloorToPlayer = CharacterOwner->GetActorLocation() - aFloorLocation;
+	const FVector floorUp = aFloorNormal;
+	const FVector floorRight = floorUp.Cross(dirFloorToPlayer);
+	const FVector floorForward = floorRight.Cross(floorUp);
+
+	const FVector dirToWall = aWallLocation - aFloorLocation;
+	const FVector projWallDirOntoFloorSurface = (dirToWall.Dot(floorForward) / floorForward.Dot(floorForward)) * floorForward;
+	const float distToEdge = projWallDirOntoFloorSurface.Length();
+	outLedgeEdge = aFloorLocation + floorForward.GetSafeNormal() * distToEdge;
+
+	// draw floor axis
+	DrawDebugLine(GetWorld(), aFloorLocation, aFloorLocation + floorUp * 100.f, FColor::Cyan);
+	DrawDebugLine(GetWorld(), aFloorLocation, aFloorLocation + floorRight * 100.f, FColor::Green);
+	DrawDebugLine(GetWorld(), aFloorLocation, aFloorLocation + floorForward * 100.f, FColor::Red);
+
+	//UE_VLOG_SEGMENT(this, LogDeftLedge, Log, aFloorLocation, aFloorLocation + projWallDirOntoFloorSurface, FColor::Cyan, TEXT("Proj Wall Dir Onto Floor"));
+	//UE_VLOG_SEGMENT(this, LogDeftLedge, Log, aFloorLocation, aFloorLocation + dirToWall.GetSafeNormal() * dirToWall.Length(), FColor::Cyan, TEXT("Floor To Wall Location"));
+
+	//UE_VLOG_SEGMENT(this, LogDeftLedge, Log, aFloorLocation, aFloorLocation + floorUp * 100.f, FColor::Cyan, TEXT("Floor Up"));
+	//UE_VLOG_SEGMENT(this, LogDeftLedge, Log, aFloorLocation, aFloorLocation + floorRight * 100.f, FColor::Green, TEXT("Floor Right"));
+	UE_VLOG_SEGMENT(this, LogDeftLedge, Log, aFloorLocation, aFloorLocation + floorForward * 100.f, FColor::Red, TEXT("Floor Forward"));
+	UE_VLOG_LOCATION(this, LogDeftLedge, Log, outLedgeEdge, 5.f, FColor::Blue, TEXT("Ledge Edge"));
+}
+
+
+void UDeftMovementComponent::GetHopUpLocation(const FVector& aLedgeEdge, FVector& outHopUpLocation)
+{
+	const UCapsuleComponent* capsuleComponent = CharacterOwner->GetCapsuleComponent();
+	const FVector actorForward = CharacterOwner->GetActorForwardVector();
+
+	const float halfCapsuleRadius = capsuleComponent->GetScaledCapsuleRadius() / 2.f;
+	// location starting from the ledge edge, in the direction the player is facing, pushed in by half the capsule radius which gives the shortest distance we can stand on the ledge
+	outHopUpLocation = aLedgeEdge + actorForward * halfCapsuleRadius;
+
+	UE_VLOG_SEGMENT(this, LogDeftLedge, Log, aLedgeEdge, aLedgeEdge + actorForward * 50.f, FColor::Yellow, TEXT("Dir Inward From Ledge"));
+	UE_VLOG_CAPSULE(this, LogDeftLedge, Log, outHopUpLocation, capsuleComponent->GetScaledCapsuleHalfHeight(), capsuleComponent->GetScaledCapsuleRadius(), CharacterOwner->GetActorRotation().Quaternion(), FColor::Green, TEXT("Hop Up Location"));
+}
 
 void UDeftMovementComponent::OnJumpApexReached()
 {
@@ -312,8 +510,15 @@ void UDeftMovementComponent::DebugMovement()
 
 void UDeftMovementComponent::DebugPhysFalling()
 {
-	if (MovementMode == MOVE_Falling)
-		UE_LOG(LogTemp, Warning, TEXT("Z Velocity: %.2f"), Velocity.Z);
+	if (MovementMode != MOVE_Falling)
+		return;
+
+	const FVector actorLocation = CharacterOwner->GetActorLocation() + CharacterOwner->GetActorUpVector() * LedgeVerticalReachMax;
+	FColor geometryDebugColor = m_LedgeDebug.m_GeometryHit ? FColor::Red : FColor::White;
+
+	DrawDebugLine(GetWorld(), actorLocation, m_LedgeDebug.m_GeometryHitLocation, FColor::Yellow);
+
+	DrawDebugSphere(GetWorld(), m_LedgeDebug.m_GeometryHitLocation, m_SphereCollisionShape.GetSphereRadius(), 12, geometryDebugColor);
 }
 
 void UDeftMovementComponent::DebugPlatformJump()
@@ -335,5 +540,7 @@ void UDeftMovementComponent::DebugPlatformJump()
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, bUsePostJumpGravity ? FColor::Green : FColor::Red, FString::Printf(TEXT("Post Jump Gravity: %s"), bUsePostJumpGravity ? TEXT("Enabled") : TEXT("Disabled")));
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, m_bInPlatformJump ? FColor::Green : FColor::White, FString::Printf(TEXT("Jump State %s\nFrom %s"), m_bInPlatformJump ? TEXT("In Jump") : TEXT("Not Jumping"), IsAttemptingDoubleJump() ? TEXT("Mid Air") : TEXT("Solid Ground")));
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::Cyan, TEXT("\n-Gravity Scaled Jump-"));
+
+	DebugPhysFalling();
 }
 #endif

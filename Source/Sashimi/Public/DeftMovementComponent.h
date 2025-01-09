@@ -8,7 +8,7 @@
 #include "DeftMovementComponent.generated.h"
 
 DECLARE_LOG_CATEGORY_EXTERN(LogDeftMovement, Log, All);
-
+DECLARE_LOG_CATEGORY_EXTERN(LogDeftLedge, Log, All);
 
 namespace CustomMovement
 {
@@ -44,7 +44,18 @@ protected:
 	virtual void PhysFalling(float aDeltaTime, int32 aIterations) override;
 	void ResetFromFalling();
 
+	// TODO: rename
+	// changes the gravity if need be based off how long the player holds the jump button
 	void PhysPlatformJump(float aDeltaTime);
+
+	bool FindLedge();
+
+	bool CheckForWall(FVector& outWallLocation);
+	bool CheckForLedge(const FVector& aWallLocation, FVector& outHeightDistance);
+	bool CheckLedgeSurface(const FVector& aFloorCheckHeightOrigin, FVector& outFloorLocation, FVector& outFloorNormal);
+	bool CheckSpaceForCapsule(const FVector& aFloorLocation);
+	void GetLedgeEdge(const FVector& aFloorLocation, const FVector& aFloorNormal, FVector& aWallLocation, FVector& outLedgeEdge);
+	void GetHopUpLocation(const FVector& aLedgeEdge, FVector& outHopUpLocation);
 
 private:
 	void OnJumpApexReached();
@@ -75,6 +86,23 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Jump Control | Variable Jump", meta=(ToolTip="Maximum hold time needed to achieve maximum jump height (cm)"))
 	float JumpKeyMaxHoldTime;
 
+
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control | Wall Reach", meta=(ToolTip="Maximum reach distance a ledge can be in front of the player"))
+	float WallReach;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control | Ledge Height", meta=(ToolTip="Maximum reach distance a ledge can be in front of the player"))
+	float LedgeHeightOrigin;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control | Ledge Height Reach", meta=(ToolTip="Maximum reach distance a ledge can be in front of the player"))
+	float LedgeHeightForwardReach;
+
+
+	// Ledge
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control | Reach Distance", meta=(ToolTip="Maximum reach distance a ledge can be in front of the player"))
+	float LedgeForwardReachMax;
+	// Height added to the capsule half height where ledges should be checked for
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control | Reach Distance", meta=(ToolTip="Maximum reach distance ledge can be above the player"))
+	float LedgeVerticalReachMax;
+
 private:
 	// Jump Physics
 	FVector m_PlatformJumpInitialPosition = FVector::ZeroVector;
@@ -86,16 +114,21 @@ private:
 	bool m_bJumpApexReached = false;			// true when the apex of the jump has been reached
 	bool m_bInPlatformJump = false;				// true when we are in the air because of a jump (versus falling off ledge or otherwise)
 	bool m_bIncrementJumpInputHoldTime = false;	// true when we should count how long the player held the jump input button for variable jumping
-	
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Jump Control | Coyote Jump", meta=(AllowPrivateAccess = "true", AllowToolTip = "determines how far we can fall (from the point when Velocity turns negative) before being able to jump. Allows for coyote time while restricting jumps after a certain velocity"))
 	float m_FallDistanceJumpThreshold = 0.f;	// determines how far we can fall (from the point when Velocity turns negative) before being able to jump. Allows for coyote time while restricting jumps after a certain velocity
 	FVector m_FallOrigin = FVector::ZeroVector;	// determines the last location we started falling from. NOTE: Only valid when in MOVE_Falling, and only set when Velocity becomes negative
 	bool m_bIsFallOriginSet = false;			// indicates whether we set the location we started truely falling from (velocity goes from pos -> neg)
 
+	// Ledge Physics
+
 	// Default Physics
 	float m_DefaultGravityZCache = 0.f;
 	float m_DefaultGravityScaleCache = 0.f;
 	float m_PreviousVelocityZ = 0.f;
+
+	FCollisionQueryParams m_CollisionQueryParams;
+	FCollisionShape m_CapsuleCollisionShapeCache;
+	FCollisionShape m_SphereCollisionShape;
 
 #if DEBUG_VIEW
 	void DrawDebug();
@@ -109,5 +142,11 @@ private:
 		TArray<float>	m_GravityValues; // there are going to be multiple gravities
 		float			m_InitialVelocity = 0.f;
 	} m_PlatformJumpDebug;
+
+	struct LedgeDebug
+	{
+		FVector m_GeometryHitLocation;
+		bool m_GeometryHit;
+	} m_LedgeDebug;
 #endif
 };
