@@ -8,6 +8,8 @@
 #include "Character/PlayerCharacter.h"
 #include "CollisionQueryParams.h"
 #include "Kismet/GameplayStatics.h"
+#include "DeftLocks.h"
+#include "GameFramework/ForceFeedbackEffect.h"
 
 // DEBUG VISUALIZATION
 static TAutoConsoleVariable<bool> CVarDebugLocomotion(TEXT("d.DebugMovement"), false, TEXT("shows debug info for movement"));
@@ -17,6 +19,7 @@ static TAutoConsoleVariable<bool> CVarDebugJump(TEXT("d.DebugJump"), false, TEXT
 static TAutoConsoleVariable<bool> CVarUseUEJump(TEXT("d.UseUEJump"), false, TEXT("if enabled use the default UE5 jump physics"));
 static TAutoConsoleVariable<bool> CVarEnablePostJumpGravity(TEXT("d.EnablePostJumpGravity"), true, TEXT("if enabled use a different post jump gravity"));
 static TAutoConsoleVariable<bool> CVarTestVariableJump(TEXT("d.TestVariableJump"), false, TEXT("spamspam"));
+static TAutoConsoleVariable<bool> CVarDeftLocksUnlockAll(TEXT("d.DeftLocks.UnlockAll"), false, TEXT("reset all locks"));
 
 DEFINE_LOG_CATEGORY(LogDeftMovement);
 DEFINE_LOG_CATEGORY(LogDeftLedge);
@@ -61,17 +64,32 @@ void UDeftMovementComponent::TickComponent(float aDeltaTime, enum ELevelTick aTi
 {
 	Super::TickComponent(aDeltaTime, aTickType, aThisTickFunction);
 
-	if (m_bInPlatformJump && !m_bJumpApexReached) // TODO: right now we're relying on MOVE_Falling to drive the actual physics state, but we still need to track data while in the jump to know when to change gravity
+	if (m_bInPlatformJump && !m_bJumpApexReached || m_bIsLedgingUp) // TODO: right now we're relying on MOVE_Falling to drive the actual physics state, but we still need to track data while in the jump to know when to change gravity
 	{
 		PhysPlatformJump(aDeltaTime);
 	}
 
 #if DEBUG_VIEW
 	DrawDebug();
+
+	if (CVarDeftLocksUnlockAll.GetValueOnGameThread())
+	{
+		DeftLocks::UnlockAll();
+		IConsoleManager& consoleManager = IConsoleManager::Get();
+		if (IConsoleVariable* cvar = consoleManager.FindConsoleVariable(TEXT("d.DeftLocks.UnlockAll")))
+		{
+			UE_LOG(LogTemp, Warning, TEXT("reset d.DeftLocks.UnlockAll"));
+			cvar->Set(false, ECVF_Cheat);
+			
+		}
+		else
+		{
+			UE_LOG(LogTemp, Error, TEXT("couldn't find d.DeftLocks.UnlockAll"));
+		}
+	}
 #endif
 }
 
-static float testSwitchAtHalf;
 bool UDeftMovementComponent::DoJump(bool bReplayingMoves, float DeltaTime)
 {
 	if (CVarUseUEJump.GetValueOnGameThread())
@@ -199,13 +217,13 @@ void UDeftMovementComponent::PhysFalling(float aDeltaTime, int32 aIterations)
 		// if velocity is positive
 		//		holding jump key: hop up
 		//		not holding jump key: do nothing
-		m_bIsLedgeAvailable = FindLedge();
+		const bool bInRangeOfLedge = FindLedge();
 		const bool bIsJumpButtonDown = m_bIncrementJumpInputHoldTime; // will be true for ETriggerEvent::Started and false for ETriggerEvent::Completed
 
 		const FVector actorLocation = CharacterOwner->GetActorLocation();
 		const FVector fwd = CharacterOwner->GetActorForwardVector();
 
-		if (m_bIsLedgeAvailable && bIsJumpButtonDown)
+		if (bInRangeOfLedge && bIsJumpButtonDown && !m_bIsLedgingUp)
 		{
 			// ledge up
 			//	- height = however high we need to make sure the capsule is above the ledge surface
@@ -215,7 +233,44 @@ void UDeftMovementComponent::PhysFalling(float aDeltaTime, int32 aIterations)
 			// 3. jump
 			// 4. on jump apex achieved unlock forward and backwards input and ADD some small constant forward velocity
 
-			PerformLedgeUp();
+			// 1. Lock all move input
+			DeftLocks::IncrementMoveInputForwardBackLockRef();
+			DeftLocks::IncrementMoveInputRightLeftockRef();
+
+			// 2. calculate min height needed for capsule to be above surface
+			const UCapsuleComponent* capsuleComponent = CharacterOwner->GetCapsuleComponent();
+			const float capsuleHalfHeight = capsuleComponent->GetScaledCapsuleHalfHeight();
+			const FVector targetLocation = m_ledgeEdgeCache + FVector(0.f, 0.f, capsuleHalfHeight + LedgeUpAdditionalHeightOffset);
+			const float distanceToLedgeUpHeight = targetLocation.Z - CharacterOwner->GetActorLocation().Z;
+
+			UE_VLOG_SPHERE(this, LogDeftLedgeLaunchTrajectory, Log, targetLocation, 5.f, FColor::Green, TEXT("ledgeUpHeight"));
+			UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("char to target distance: %.2f"), distanceToLedgeUpHeight);
+
+			// 3. calculate jump velocity and gravity needed to reach ledge height in time
+			const FVector ledgeUpVelocity = CalculateJumpInitialVelocity(TimeToReachLedgeUpHeight, distanceToLedgeUpHeight);
+			const float ledgeUpGravityScale = CalculateJumpGravityScale(TimeToReachLedgeUpHeight, distanceToLedgeUpHeight);
+
+			// 4. Clear out any previous state or velocity
+			ResetJump();
+			Velocity = FVector::ZeroVector;
+
+			// 5. Jump
+			// this should still respect the number of jumps we've done, so if we double jumped to get to the ledge we won't be able to perform another after
+			// but if we only jumped once into a ledge up we should be able to jump again after
+			Velocity.Z = ledgeUpVelocity.Z;
+			GravityScale = ledgeUpGravityScale;
+			m_bIsLedgingUp = true;
+
+			if (LedgeUpFeedback)
+			{
+				if (APlayerController* playerController = Cast<APlayerController>(CharacterOwner->Controller))
+				{
+					FForceFeedbackParameters feedbackParams;
+					playerController->ClientPlayForceFeedback(LedgeUpFeedback, feedbackParams);
+				}
+			}
+
+			//PerformLedgeUp();
 		}
 
 		UE_VLOG_SEGMENT(this, LogDeftLedge, Log, actorLocation, actorLocation + fwd * 1000.f, FColor::Magenta, TEXT("Actor Forward"));
@@ -585,18 +640,29 @@ void UDeftMovementComponent::GetHopUpLocation(const FVector& aLedgeEdge, FVector
 void UDeftMovementComponent::OnJumpApexReached()
 {
 	UE_LOG(LogTemp, Warning, TEXT("apex reached"));
-	if (CVarEnablePostJumpGravity.GetValueOnGameThread())
-	{
-		m_bJumpApexReached = true;
-		GravityScale = m_PostJumpGravityScale;
+	m_bJumpApexReached = true;
+	m_bIncrementJumpInputHoldTime = false;
+	m_JumpKeyHoldTime = 0.f;
+	GravityScale = m_PostJumpGravityScale;
 
-		m_bIncrementJumpInputHoldTime = false;
-		m_JumpKeyHoldTime = 0.f;
+	// TODO this shouldn't be done exclusively on apex, it needs to be whenever we are above the surface
+	if (m_bIsLedgingUp)// TODO: move this into its own function
+	{
+		// re-allow forward/back movement input to give the player freedom to bail from continuing the ledge up if they wish
+		//DeftLocks::DecrementMoveInputForwardBackLockRef();
+		
+		// whatever the gravity was for ledge up increase by 150% to bring us down even faster
+		//GravityScale *= 1.5f;
+
+		// apply minimum forward velocity so even without input player still lands on ledge
+		FVector forwardVelocity = CharacterOwner->GetActorForwardVector() * LedgeUpForwardMinBoost;
+		Velocity.X += forwardVelocity.X;
+		Velocity.Y += forwardVelocity.Y;
+	}
 
 #if DEBUG_VIEW
-		m_PlatformJumpDebug.m_GravityValues.Add(m_DefaultGravityZCache * GravityScale);
+	m_PlatformJumpDebug.m_GravityValues.Add(m_DefaultGravityZCache * GravityScale);
 #endif
-	}
 }
 
 
@@ -614,14 +680,24 @@ float UDeftMovementComponent::CalculateJumpGravityScale(float aTime, float aHeig
 
 void UDeftMovementComponent::ResetJump()
 {
+	// reset ledge up v2
+	if (m_bIsLedgingUp)
+	{
+		DeftLocks::DecrementMoveInputRightLeftLockRef();
+		DeftLocks::DecrementMoveInputForwardBackLockRef();
+	}
 	m_bIsLedgingUp = false; // TODO: might want its own reset
+
+	// reset jump
 	m_bInPlatformJump = false;
 	m_bJumpApexReached = false;
 	GravityScale = m_DefaultGravityScaleCache;
 
+	// reset falling
 	m_bIsFallOriginSet = false;
 	m_FallOrigin = FVector::ZeroVector;
 
+	// reset ledge up
 	m_ledgeHopUpLocationCache = FVector::ZeroVector;
 	m_ledgeEdgeCache = FVector::ZeroVector;
 }
@@ -640,6 +716,8 @@ void UDeftMovementComponent::DrawDebug()
 	GEngine->AddOnScreenDebugMessage(-1, 0.01, CVarDebugJump.GetValueOnGameThread() ? FColor::Yellow : FColor::White, FString::Printf(TEXT("d.DebugJump: %d"), (int32)CVarDebugJump.GetValueOnGameThread()));
 	GEngine->AddOnScreenDebugMessage(-1, 0.01, CVarUseUEJump.GetValueOnGameThread() ? FColor::Yellow : FColor::White, FString::Printf(TEXT("d.UseUEJump: %d"), (int32)CVarUseUEJump.GetValueOnGameThread()));
 	GEngine->AddOnScreenDebugMessage(-1, 0.01, CVarEnablePostJumpGravity.GetValueOnGameThread() ? FColor::Yellow : FColor::White, FString::Printf(TEXT("d.EnablePostJumpGravity: %d"), (int32)CVarEnablePostJumpGravity.GetValueOnGameThread()));
+
+	DeftLocks::DrawLockDebug();
 }
 
 void UDeftMovementComponent::DebugMovement()
@@ -672,6 +750,8 @@ void UDeftMovementComponent::DebugMovement()
 	DrawDebugSphere(GetWorld(), leftFoot + actorUp * -1 * (capsulHalfHeight - footRadius), footRadius, 12, FColor::Yellow);
 
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::White, FString::Printf(TEXT("\tVelocity %s"), *Velocity.ToString()));
+
+	UE_VLOG_CAPSULE(this, LogDeftMovement, Log, CharacterOwner->GetActorLocation() - CharacterOwner->GetActorUpVector() * capsulHalfHeight, capsulHalfHeight, capsulComponent->GetScaledCapsuleRadius(), CharacterOwner->GetActorRotation().Quaternion(), FColor::White, TEXT(""));
 }
 
 

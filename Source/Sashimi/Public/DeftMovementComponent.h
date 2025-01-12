@@ -42,8 +42,6 @@ public:
 	void OnJumpPressed();
 	void OnJumpReleased();
 
-	bool IsLedgingUp() const { return m_bIsLedgingUp; }
-
 protected:
 	virtual void PhysFalling(float aDeltaTime, int32 aIterations) override;
 
@@ -100,6 +98,17 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control | Ledge Height Reach", meta=(ToolTip="Maximum reach distance a ledge can be in front of the player"))
 	float LedgeHeightForwardReach;
 
+	// ledge up 2.0
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control v2 ", meta=(ToolTip="Additional offset to apply to the minimum height the ledge up jumps the player (which is high enough for the capsule to be just above ledge) "))
+	float LedgeUpAdditionalHeightOffset;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control v2 ", meta=(ToolTip="Time it takes (in seconds) to reach the ledge up height"))
+	float TimeToReachLedgeUpHeight;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control v2 ", meta=(ToolTip="The minimum forward velocity to perform on ledge up if the player has no input ensuring we at least land on the ledge"))
+	float LedgeUpForwardMinBoost;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control v2 ", meta=(ToolTip="Force Feedback Effect to use for ledge up"))
+	TObjectPtr<class UForceFeedbackEffect> LedgeUpFeedback;
+
+
 private:
 	// Jump Physics
 	FVector m_PlatformJumpInitialPosition = FVector::ZeroVector;
@@ -119,7 +128,6 @@ private:
 	// Ledge Physics
 	FVector m_ledgeEdgeCache;
 	FVector m_ledgeHopUpLocationCache;
-	bool m_bIsLedgeAvailable;
 	bool m_bIsLedgingUp;
 
 	// Default Physics

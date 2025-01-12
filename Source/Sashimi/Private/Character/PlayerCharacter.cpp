@@ -5,6 +5,7 @@
 #include "Components/SkeletalMeshComponent.h"
 #include "EnhancedInputSubsystems.h"
 #include "EnhancedInputComponent.h"
+#include "DeftLocks.h"
 
 // DEBUG VISUALIZATION
 static TAutoConsoleVariable<bool> CVarDebugInput(TEXT("d.DebugInput"), false, TEXT("shows debug info for input"));
@@ -71,21 +72,11 @@ void APlayerCharacter::Move(const FInputActionValue& aValue)
 
 		// get forward vector
 		// note: is there a benefit from getting forward form the rotation and not just ActorForwardVector?
-		const FVector forwardDir = FRotationMatrix(yawRotation).GetUnitAxis(EAxis::X);
-		const FVector rightDir = FRotationMatrix(yawRotation).GetUnitAxis(EAxis::Y);
+		const FVector forwardDir = DeftLocks::IsMoveInputForwardBackLocked() ? FVector::ZeroVector : FRotationMatrix(yawRotation).GetUnitAxis(EAxis::X);
+		const FVector rightDir = DeftLocks::IsMoveInputRightLeftLocked() ? FVector::ZeroVector : FRotationMatrix(yawRotation).GetUnitAxis(EAxis::Y);
 
 		AddMovementInput(forwardDir, inputVector.Y);
-
-		bool bIgnoreSidewaysInput = false;
-		if (UDeftMovementComponent* deftMovementComponent = Cast<UDeftMovementComponent>(GetCharacterMovement()))
-		{
-			// if we're ledging up we want to ignore sideways input
-			bIgnoreSidewaysInput = deftMovementComponent->IsLedgingUp();
-		}
-		if (!bIgnoreSidewaysInput)
-		{
-			AddMovementInput(rightDir, inputVector.X);
-		}
+		AddMovementInput(rightDir, inputVector.X);
 	}
 }
 
