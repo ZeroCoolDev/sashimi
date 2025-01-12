@@ -9,13 +9,15 @@
 
 DECLARE_LOG_CATEGORY_EXTERN(LogDeftMovement, Log, All);
 DECLARE_LOG_CATEGORY_EXTERN(LogDeftLedge, Log, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogDeftLedgeLaunchTrajectory, Log, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogDeftLedgeLaunchPath, Log, All);
 
 namespace CustomMovement
 {
 	UENUM(BlueprintType)
 	enum ECustomMovementMode
 	{
-		PlatformJump	UMETA(DisplayName="Platform Jump"),
+		LedgeHang	UMETA(DisplayName="Ledge Hang"),
 		COUNT			UMETA(Hidden)
 	};
 };
@@ -40,15 +42,17 @@ public:
 	void OnJumpPressed();
 	void OnJumpReleased();
 
+	bool IsLedgingUp() const { return m_bIsLedgingUp; }
+
 protected:
 	virtual void PhysFalling(float aDeltaTime, int32 aIterations) override;
-	void ResetFromFalling();
 
 	// TODO: rename
 	// changes the gravity if need be based off how long the player holds the jump button
 	void PhysPlatformJump(float aDeltaTime);
 
 	bool FindLedge();
+	void PerformLedgeUp();
 
 	bool CheckForWall(FVector& outWallLocation);
 	bool CheckForLedge(const FVector& aWallLocation, FVector& outHeightDistance);
@@ -64,6 +68,7 @@ private:
 	// Calculates the gravity scale needed to achieve the desired height in the desired time
 	float CalculateJumpGravityScale(float aTime, float aHeight);
 	bool IsAttemptingDoubleJump() const { return m_bInPlatformJump && m_bIsFallOriginSet; }
+	void ResetJump();
 
 protected:
 	// Max Jump height if the player holds the button the required max time
@@ -87,21 +92,13 @@ protected:
 	float JumpKeyMaxHoldTime;
 
 
-
+	// ledege up
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control | Wall Reach", meta=(ToolTip="Maximum reach distance a ledge can be in front of the player"))
 	float WallReach;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control | Ledge Height", meta=(ToolTip="Maximum reach distance a ledge can be in front of the player"))
 	float LedgeHeightOrigin;
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control | Ledge Height Reach", meta=(ToolTip="Maximum reach distance a ledge can be in front of the player"))
 	float LedgeHeightForwardReach;
-
-
-	// Ledge
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control | Reach Distance", meta=(ToolTip="Maximum reach distance a ledge can be in front of the player"))
-	float LedgeForwardReachMax;
-	// Height added to the capsule half height where ledges should be checked for
-	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control | Reach Distance", meta=(ToolTip="Maximum reach distance ledge can be above the player"))
-	float LedgeVerticalReachMax;
 
 private:
 	// Jump Physics
@@ -120,6 +117,10 @@ private:
 	bool m_bIsFallOriginSet = false;			// indicates whether we set the location we started truely falling from (velocity goes from pos -> neg)
 
 	// Ledge Physics
+	FVector m_ledgeEdgeCache;
+	FVector m_ledgeHopUpLocationCache;
+	bool m_bIsLedgeAvailable;
+	bool m_bIsLedgingUp;
 
 	// Default Physics
 	float m_DefaultGravityZCache = 0.f;
@@ -134,6 +135,7 @@ private:
 	void DrawDebug();
 	void DebugMovement();
 	void DebugPhysFalling();
+	void DebugLedgeLaunch(const FVector& aStartLocation, const FVector& aLaunchVelocity, float aFlightTime, float aTimestep, FColor aDrawColor);
 
 	void DebugPlatformJump();
 	struct PlatformJumpDebug

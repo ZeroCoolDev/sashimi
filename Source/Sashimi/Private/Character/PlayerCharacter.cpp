@@ -75,7 +75,17 @@ void APlayerCharacter::Move(const FInputActionValue& aValue)
 		const FVector rightDir = FRotationMatrix(yawRotation).GetUnitAxis(EAxis::Y);
 
 		AddMovementInput(forwardDir, inputVector.Y);
-		AddMovementInput(rightDir, inputVector.X);
+
+		bool bIgnoreSidewaysInput = false;
+		if (UDeftMovementComponent* deftMovementComponent = Cast<UDeftMovementComponent>(GetCharacterMovement()))
+		{
+			// if we're ledging up we want to ignore sideways input
+			bIgnoreSidewaysInput = deftMovementComponent->IsLedgingUp();
+		}
+		if (!bIgnoreSidewaysInput)
+		{
+			AddMovementInput(rightDir, inputVector.X);
+		}
 	}
 }
 

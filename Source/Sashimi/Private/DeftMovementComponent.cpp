@@ -7,6 +7,7 @@
 #include "PhysicsEngine/PhysicsSettings.h"
 #include "Character/PlayerCharacter.h"
 #include "CollisionQueryParams.h"
+#include "Kismet/GameplayStatics.h"
 
 // DEBUG VISUALIZATION
 static TAutoConsoleVariable<bool> CVarDebugLocomotion(TEXT("d.DebugMovement"), false, TEXT("shows debug info for movement"));
@@ -18,7 +19,9 @@ static TAutoConsoleVariable<bool> CVarEnablePostJumpGravity(TEXT("d.EnablePostJu
 static TAutoConsoleVariable<bool> CVarTestVariableJump(TEXT("d.TestVariableJump"), false, TEXT("spamspam"));
 
 DEFINE_LOG_CATEGORY(LogDeftMovement);
-DEFINE_LOG_CATEGORY(LogDeftLedge)
+DEFINE_LOG_CATEGORY(LogDeftLedge);
+DEFINE_LOG_CATEGORY(LogDeftLedgeLaunchTrajectory);
+DEFINE_LOG_CATEGORY(LogDeftLedgeLaunchPath);
 
 UDeftMovementComponent::UDeftMovementComponent()
 {
@@ -83,22 +86,10 @@ bool UDeftMovementComponent::DoJump(bool bReplayingMoves, float DeltaTime)
 		// Don't jump if we can't move up/down.
 		if (!bConstrainToPlane || !FMath::IsNearlyEqual(FMath::Abs(GetGravitySpaceZ(PlaneConstraintNormal)), 1.f))
 		{
-			//// Don't allow double jump with positive velocity
-			//if (m_bInPlatformJump && !m_bJumpApexReached)
-			//	return false;
-
 			//TODO: we don't care if we're in mid air or not, just make a function to get a different parabola if need be			
 			FVector initialVelocity = CalculateJumpInitialVelocity(TimeToJumpMaxHeight, JumpMaxHeight);
 			float gravityScale = m_MaxPreJumpGravityScale;
-			//if (IsAttemptingDoubleJump())
-			//{
-			//	// only add extra velocity if we're headed downwards
-			//	if (Velocity.Z < 0)
-			//	{
-			//		initialVelocity.Z += -Velocity.Z; // I want a double jump to always cover (for ex) 2m. The velocity we calculate is assuming we're starting at 0 velocity, but if we're already falling we might have a large negative velocity
-			//	}
-			//	gravityScale = m_MinPreJumpGravityScale;
-			//}
+
 			Velocity.Z = initialVelocity.Z;
 			GravityScale = gravityScale;
 
@@ -138,7 +129,7 @@ void UDeftMovementComponent::OnMovementModeChanged(EMovementMode PreviousMovemen
 		switch (PreviousMovementMode)
 		{
 			case MOVE_Falling:
-				ResetFromFalling();
+				ResetJump();
 		}
 	}
 }
@@ -161,20 +152,12 @@ bool UDeftMovementComponent::CanAttemptJump() const
 
 void UDeftMovementComponent::OnJumpPressed()
 {
-	// we don't want variable jump for double jumps
-	//if (IsAttemptingDoubleJump())
-	//	return;
-
 	m_JumpKeyHoldTime = 0.f;
 	m_bIncrementJumpInputHoldTime = true;
 }
 
 void UDeftMovementComponent::OnJumpReleased()
 {
-	// we don't want variable jump for double jumps
-	//if (IsAttemptingDoubleJump())
-	//	return;
-
 	// apply a new gravity scale based on time held
 	if (m_bIncrementJumpInputHoldTime)
 	{
@@ -208,33 +191,42 @@ void UDeftMovementComponent::PhysFalling(float aDeltaTime, int32 aIterations)
 		m_FallOrigin = CharacterOwner->GetActorLocation();
 	}
 
-	// if velocity is negative (or we're post apex) and there is a ledge grab, grab it
-	//		currently holding a ledge and jump or (maybe) forward is pressed hop up
-	// if velocity is positive
-	//		holding jump key: hop up
-	//		not holding jump key: do nothing
-	FindLedge();
-
-	// TODO: implement wall run up which will also trigger an automatic hop up at the top of ledges
-}
-
-
-void UDeftMovementComponent::ResetFromFalling()
-{
-	if (m_bInPlatformJump)
+	// Only perform a ledge up if we're not already ledging up
+	if (!m_bIsLedgingUp && (m_bJumpApexReached || Velocity.Z < 0))
 	{
-		m_bInPlatformJump = false;
-		m_bJumpApexReached = false; //tODO: this needs to be reset to false when we double jump!! thats why we're never resetting gravity to the post jump gravity
-		GravityScale = m_DefaultGravityScaleCache;
-	}
+		// if velocity is negative (or we're post apex) and there is a ledge grab, grab it
+		//		currently holding a ledge and jump or (maybe) forward is pressed hop up
+		// if velocity is positive
+		//		holding jump key: hop up
+		//		not holding jump key: do nothing
+		m_bIsLedgeAvailable = FindLedge();
+		const bool bIsJumpButtonDown = m_bIncrementJumpInputHoldTime; // will be true for ETriggerEvent::Started and false for ETriggerEvent::Completed
 
-	m_bIsFallOriginSet = false;
-	m_FallOrigin = FVector::ZeroVector;
+		const FVector actorLocation = CharacterOwner->GetActorLocation();
+		const FVector fwd = CharacterOwner->GetActorForwardVector();
+
+		if (m_bIsLedgeAvailable && bIsJumpButtonDown)
+		{
+			// ledge up
+			//	- height = however high we need to make sure the capsule is above the ledge surface
+			//	- time = the constant time we want it to take
+			// 1. lock all move input
+			// 2. calculate the jump velocity and gravity needed to achieve height in time
+			// 3. jump
+			// 4. on jump apex achieved unlock forward and backwards input and ADD some small constant forward velocity
+
+			PerformLedgeUp();
+		}
+
+		UE_VLOG_SEGMENT(this, LogDeftLedge, Log, actorLocation, actorLocation + fwd * 1000.f, FColor::Magenta, TEXT("Actor Forward"));
+
+		// TODO: implement wall run up which will also trigger an automatic hop up at the top of ledges
+	}
 }
 
 void UDeftMovementComponent::PhysPlatformJump(float aDeltaTime)
 {
-	// TODO: can probably precalculate this if we need
+	// TODO: can probably pre-calculate this if we need
 	float distanceJumped = FMath::Abs(CharacterOwner->GetActorLocation().Z - m_PlatformJumpInitialPosition.Z);
 	m_PlatformJumpApex = FMath::Max(m_PlatformJumpApex, distanceJumped);
 
@@ -244,7 +236,6 @@ void UDeftMovementComponent::PhysPlatformJump(float aDeltaTime)
 	}
 
 	// indicates we've started falling because our velocity has switched directions or gone from pos to 0
-	UE_LOG(LogTemp, Warning, TEXT("VelocityZ %.2f"), Velocity.Z);
 	if (Velocity.Z < 0.f)
 	{
 		OnJumpApexReached();
@@ -269,14 +260,172 @@ bool UDeftMovementComponent::FindLedge()
 	// Regardless if there's space I want to know where the edge is
 	FVector ledgeEdgeLocation;
 	GetLedgeEdge(ledgeSurfaceLocation, ledgeSurfaceNormal, wallLocation, ledgeEdgeLocation);
+	m_ledgeEdgeCache = ledgeEdgeLocation;
 
 	if (!CheckSpaceForCapsule(ledgeSurfaceLocation))
 		return false;
 
 	FVector hopUpLocation;
 	GetHopUpLocation(ledgeEdgeLocation, hopUpLocation);
+	m_ledgeHopUpLocationCache = hopUpLocation;
 
 	return true;
+}
+
+
+void UDeftMovementComponent::PerformLedgeUp()
+{
+	// TODO: maybe use a timer to set this to false
+	m_bIsLedgingUp = true;
+	GravityScale *= 2.f;
+
+	// get velocity to reach high enough that the entire capsule is above the ledge
+	const UCapsuleComponent* capsuleComponent = CharacterOwner->GetCapsuleComponent();
+	const float capsuleHalfHeight = capsuleComponent->GetScaledCapsuleHalfHeight();
+	const FVector capsuleBase = CharacterOwner->GetActorLocation() - CharacterOwner->GetActorUpVector() * capsuleHalfHeight;
+
+	UE_VLOG_SPHERE(this, LogDeftLedgeLaunchTrajectory, Log, capsuleBase, 2.5f, FColor::Green, TEXT("Capsule Base"));
+	UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("capsuleBase: %s"), *capsuleBase.ToString());
+	UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("hopUpLocation: %s"), *m_ledgeHopUpLocationCache.ToString());
+
+	// using the capsule base as the players position because the hop up location also uses the base.
+	// otherwise the "center" of the capsule might clear the height but the bottom would collide and that'd mess everything up.
+
+	// horizontal motion
+	// Xf = X0 + V0 * cos(theta) * t
+
+	// vertical motion
+	// Yf = Y0 + V0 * sin(theta) * t - (1/2gt^2)
+	
+	// min height check
+	// H = ( V0^2 * sin^2(theta) ) / 2g
+
+	// time to reach target horizontally
+	// t = Xf - X0 / V0 * cos(theta)
+
+	FVector startLocation = capsuleBase;
+
+	// Calculate the horizontal and vertical distance from hop up location
+	FVector directionToTarget = (m_ledgeHopUpLocationCache - startLocation).GetSafeNormal();
+	UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("directionToTarget: %s"), *directionToTarget.ToString());
+	// d = Xf - X0
+	float horizontalDistance = FVector(m_ledgeHopUpLocationCache.X - startLocation.X, m_ledgeHopUpLocationCache.Y - startLocation.Y, 0.f).Length();
+	// Yf - Y0, distance from players position to the target height
+	float verticalDistance = m_ledgeHopUpLocationCache.Z - startLocation.Z;
+
+	UE_VLOG_SEGMENT(this, LogDeftLedgeLaunchTrajectory, Log, startLocation, startLocation + directionToTarget * horizontalDistance, FColor::Red, TEXT("horizontalDist"));
+	UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("horizontal distance: %.2f"), horizontalDistance);
+
+	UE_VLOG_SEGMENT(this, LogDeftLedgeLaunchTrajectory, Log, startLocation, startLocation + directionToTarget * verticalDistance, FColor::Cyan, TEXT("verticalDis"));
+	UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("vertical distance: %.2f"), verticalDistance);
+
+	// gravity for whatever our current jump velocity is
+	// TODO might want to make this constant
+	// Gravity needs to be positive for the calculation to work
+	const float gravity = FMath::Abs(m_DefaultGravityZCache * GravityScale);
+	UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("gravity: %.2f"), gravity);
+
+	// Multiple angles will result in a valid solution, but choosing the shortest flight time makes sure we don't overshoot the target
+	struct FBestResult 
+	{
+		float shortestTime = FLT_MAX;
+		FVector bestLaunchVelocity = FVector::ZeroVector;
+		float bestAngle = 0.f;
+	} bestResult;
+
+	// numerical analysis: loop through angles to find a valid trajectory that clear the min height
+	for (float testAngle = 10.f; testAngle <= 80.f; testAngle += 5.f)
+	{
+		// angle to rads
+		const float theta = FMath::DegreesToRadians(testAngle);
+
+		UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("\n\ttheta (deg): %.2f"), testAngle);
+
+		// Calculate initial velocity
+		// V0^2 = (g * d^2) / ( 2 * cos^2(theta) * (d * tan(theta) - (Yf - Y0)) )
+		const float numerator = gravity * horizontalDistance * horizontalDistance;
+		const float denom = 2 * FMath::Cos(theta) * FMath::Cos(theta) * ( horizontalDistance * FMath::Tan(theta) - verticalDistance);
+
+		if (FMath::IsNearlyEqual(denom, 0.f))
+		{
+			UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Error, TEXT("divide by zero detected when calculating velocity for angle %.2f"), testAngle);
+			continue;
+		}
+		const float velocitySquared = numerator / denom;
+
+		UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("numerator: %.2f"), numerator);
+		UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("denom: %.2f"), denom);
+		UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("velocitySquared: %.2f"), velocitySquared);
+
+		if (velocitySquared > 0.f)
+		{
+			// TODO: sqrt is slow, dont' do this
+			const float initialVelocity = FMath::Sqrt(velocitySquared);
+			UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("initialVelocity: %.2f"), initialVelocity);
+
+			// calculate maximum height of the projectile for this theta and velocity
+			const float maxHeight = (initialVelocity * initialVelocity * FMath::Sin(theta) * FMath::Sin(theta) ) / (2 * gravity);
+			UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("maxHeight: %.2f"), maxHeight);
+
+			// ensure the projectile clears the ledge
+			if (maxHeight >= verticalDistance)
+			{
+				// calculate velocity launch vector towards target from current position given initial velocity and theta
+				const FVector forwardVelocity = directionToTarget * (initialVelocity * FMath::Cos(theta));
+				UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("horizontal Velocity: %s"), *forwardVelocity.ToString());
+
+				const float upwardVelocity = initialVelocity * FMath::Sin(theta);
+				UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("upwardVelocity: %.2f"), upwardVelocity);
+				
+				const FVector launchVelocity = forwardVelocity + FVector(0.f, 0.f, upwardVelocity);
+				UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("launchVelocity: %s"), *launchVelocity.ToString());
+
+				// calculate time of flight
+				// t = ( V0 * sin(theta) + sqrt(V0 * sin^2(theta) + 2g(Yf - Y0)) ) / g
+				const float v0SinTheta = initialVelocity * FMath::Sin(theta);
+				const float flightTime = (v0SinTheta + FMath::Sqrt( (v0SinTheta * v0SinTheta) + (2 * gravity * verticalDistance) )) / gravity;
+				UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("flightTime: %.2f"), flightTime);
+
+				bool bNewBestFound = false;
+				if (flightTime < bestResult.shortestTime)									// prefer shorter flight times
+					bNewBestFound = true;
+				else if (FMath::IsNearlyEqual(flightTime, bestResult.shortestTime, 0.01f))	// same flight time, prefer larger angle to stay closer to target position
+				{
+					if (testAngle > bestResult.bestAngle)
+						bNewBestFound = true;
+				}
+
+				if (bNewBestFound)
+				{
+					bestResult.bestLaunchVelocity = launchVelocity;
+					bestResult.bestAngle = testAngle;
+					bestResult.shortestTime = flightTime;
+					UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("Found velocity [%.2f] at [%.2f] degrees with a shorter flighttime [%.2f]"), initialVelocity, bestResult.bestAngle, flightTime);
+				}
+
+				// Still vizlog all of them
+				DebugLedgeLaunch(startLocation, launchVelocity, flightTime, UGameplayStatics::GetWorldDeltaSeconds(GetWorld()), FColor::Yellow);
+			}
+			else
+			{
+				UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("maxHeight (%.2f) < verticalDistance (%.2f), next angle"), maxHeight, verticalDistance);
+			}
+		}
+		else
+		{
+			UE_VLOG(this, LogDeftLedgeLaunchTrajectory, Log, TEXT("velocitySquared was <= 0.f, next angle"));
+		}
+	}
+	
+	// launch vector found to hop up the ledge!
+	if (!bestResult.bestLaunchVelocity.IsZero())
+	{
+		// make sure any previous velocity doesn't carry over
+		Velocity = FVector::ZeroVector;
+		// launches the player 
+		Launch(bestResult.bestLaunchVelocity);
+		DebugLedgeLaunch(startLocation, bestResult.bestLaunchVelocity, bestResult.shortestTime, UGameplayStatics::GetWorldDeltaSeconds(GetWorld()), FColor::Green);
+	}
 }
 
 bool UDeftMovementComponent::CheckForWall(FVector& outWallLocation)
@@ -430,6 +579,7 @@ void UDeftMovementComponent::GetHopUpLocation(const FVector& aLedgeEdge, FVector
 
 	UE_VLOG_SEGMENT(this, LogDeftLedge, Log, aLedgeEdge, aLedgeEdge + actorForward * 50.f, FColor::Yellow, TEXT("Dir Inward From Ledge"));
 	UE_VLOG_CAPSULE(this, LogDeftLedge, Log, outHopUpLocation, capsuleComponent->GetScaledCapsuleHalfHeight(), capsuleComponent->GetScaledCapsuleRadius(), CharacterOwner->GetActorRotation().Quaternion(), FColor::Green, TEXT("Hop Up Location"));
+	UE_VLOG_SPHERE(this, LogDeftLedge, Log, outHopUpLocation, 5.f, FColor::Red, TEXT("Hop Up base"));
 }
 
 void UDeftMovementComponent::OnJumpApexReached()
@@ -459,6 +609,21 @@ FVector UDeftMovementComponent::CalculateJumpInitialVelocity(float aTime, float 
 float UDeftMovementComponent::CalculateJumpGravityScale(float aTime, float aHeight)
 {
 	return ((-2 * aHeight) / (aTime * aTime)) / m_DefaultGravityZCache;
+}
+
+
+void UDeftMovementComponent::ResetJump()
+{
+	m_bIsLedgingUp = false; // TODO: might want its own reset
+	m_bInPlatformJump = false;
+	m_bJumpApexReached = false;
+	GravityScale = m_DefaultGravityScaleCache;
+
+	m_bIsFallOriginSet = false;
+	m_FallOrigin = FVector::ZeroVector;
+
+	m_ledgeHopUpLocationCache = FVector::ZeroVector;
+	m_ledgeEdgeCache = FVector::ZeroVector;
 }
 
 #if DEBUG_VIEW
@@ -505,6 +670,8 @@ void UDeftMovementComponent::DebugMovement()
 
 	DrawDebugSphere(GetWorld(), rightFoot + actorUp * -1 * (capsulHalfHeight - footRadius), footRadius, 12, FColor::Yellow);
 	DrawDebugSphere(GetWorld(), leftFoot + actorUp * -1 * (capsulHalfHeight - footRadius), footRadius, 12, FColor::Yellow);
+
+	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::White, FString::Printf(TEXT("\tVelocity %s"), *Velocity.ToString()));
 }
 
 
@@ -512,13 +679,43 @@ void UDeftMovementComponent::DebugPhysFalling()
 {
 	if (MovementMode != MOVE_Falling)
 		return;
+}
 
-	const FVector actorLocation = CharacterOwner->GetActorLocation() + CharacterOwner->GetActorUpVector() * LedgeVerticalReachMax;
-	FColor geometryDebugColor = m_LedgeDebug.m_GeometryHit ? FColor::Red : FColor::White;
+void UDeftMovementComponent::DebugLedgeLaunch(const FVector& aStartLocation, const FVector& aLaunchVelocity, float aFlightTime, float aTimestep, FColor aDrawColor)
+{
+	const float flightTime = FMath::Min(aFlightTime, 5.f);
+	if (flightTime >= 5.f)
+	{
+		UE_VLOG(this, LogDeftLedgeLaunchPath, Log, TEXT("flight time WAY too big [%.2f] check calculation"), aFlightTime);
+	}
 
-	DrawDebugLine(GetWorld(), actorLocation, m_LedgeDebug.m_GeometryHitLocation, FColor::Yellow);
+	FVector currentLocation = aStartLocation;
+	FVector currentVelocity = aLaunchVelocity;
+	const float gravity = FMath::Abs(m_DefaultGravityZCache * GravityScale);
 
-	DrawDebugSphere(GetWorld(), m_LedgeDebug.m_GeometryHitLocation, m_SphereCollisionShape.GetSphereRadius(), 12, geometryDebugColor);
+	int i = 1;
+	bool bApexReached = false;
+	//Simulate the projectile's path over time
+	for (float time = 0.f; time < flightTime; time += aTimestep)
+	{
+		// Calculate the next position using projectile motion equations
+		FVector nextLocation = currentLocation + currentVelocity * aTimestep;
+
+		// Apply gravity to the vertical component
+		currentVelocity.Z -= gravity * aTimestep;
+
+		// Just a good way to log the name at the apex of the arc versus everyone at the same
+		if (!bApexReached && currentVelocity.Z < 0.f)
+		{
+			bApexReached = true;
+			UE_VLOG_SPHERE(this, LogDeftLedgeLaunchPath, Log, nextLocation, 2.5f, aDrawColor, TEXT("FlightTime: %.2f"), flightTime);
+		}
+
+		UE_VLOG_SEGMENT(this, LogDeftLedgeLaunchPath, Log, currentLocation, nextLocation, aDrawColor, TEXT(""));
+		++i;
+
+		currentLocation = nextLocation;
+	}
 }
 
 void UDeftMovementComponent::DebugPlatformJump()
