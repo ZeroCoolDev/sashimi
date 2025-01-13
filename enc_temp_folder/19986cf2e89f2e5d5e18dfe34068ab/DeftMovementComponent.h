@@ -18,15 +18,8 @@ namespace CustomMovement
 	enum ECustomMovementMode
 	{
 		LedgeHang	UMETA(DisplayName="Ledge Hang"),
-		COUNT		UMETA(Hidden)
+		COUNT			UMETA(Hidden)
 	};
-};
-
-enum EInternalMoveMode
-{
-	IMOVE_Jump,
-	IMOVE_LedgeUp,
-	IMOVE_None
 };
 
 /**
@@ -42,26 +35,19 @@ public:
 	UDeftMovementComponent();
 	virtual void BeginPlay();
 	virtual void TickComponent(float aDeltaTime, enum ELevelTick aTickType, FActorComponentTickFunction* aThisTickFunction) override;
-
-	// Apply instantaneous velocity in Z direction then set to Falling
 	virtual bool DoJump(bool bReplayingMoves, float DeltaTime) override;
-	// Used to know when we exit MOVE_Falling so we can reset the jump. Jumps can be reset on demand as well for example when performing a mid-air dash
 	virtual void OnMovementModeChanged(EMovementMode PreviousMovementMode, uint8 PreviousCustomMode) override;
-	// Allows special updating of internal movement mode after standard movement
-	virtual void OnMovementUpdated(float DeltaSeconds, const FVector& OldLocation, const FVector& OldVelocity);
-	// We manually track jump input
 	virtual bool CanAttemptJump() const override;
 
-	// Jump Input has been pressed
 	void OnJumpPressed();
-	// Jump Input has been released
 	void OnJumpReleased();
 
 protected:
 	virtual void PhysFalling(float aDeltaTime, int32 aIterations) override;
 
-	// Applies any movement updates necessary each frame after the standard CharacterMovementMode is applied
-	void UpdateInternalMoveMode(float aDeltaTime);
+	// TODO: rename
+	// changes the gravity if need be based off how long the player holds the jump button
+	void PhysPlatformJump(float aDeltaTime);
 
 	bool FindLedge();
 	void PerformLedgeUp();
@@ -138,22 +124,16 @@ private:
 	float m_FallDistanceJumpThreshold = 0.f;	// determines how far we can fall (from the point when Velocity turns negative) before being able to jump. Allows for coyote time while restricting jumps after a certain velocity
 	FVector m_FallOrigin = FVector::ZeroVector;	// determines the last location we started falling from. NOTE: Only valid when in MOVE_Falling, and only set when Velocity becomes negative
 	bool m_bIsFallOriginSet = false;			// indicates whether we set the location we started truely falling from (velocity goes from pos -> neg)
-	bool m_bIsJumpButtonDown = false;
 
 	// Ledge Physics
 	FVector m_ledgeEdgeCache;
 	FVector m_ledgeHopUpLocationCache;
 	bool m_bIsLedgingUp;
-	float m_ledgeBoostTime;
-	float m_ledgeBoostMaxTime;
 
 	// Default Physics
 	float m_DefaultGravityZCache = 0.f;
 	float m_DefaultGravityScaleCache = 0.f;
 	float m_PreviousVelocityZ = 0.f;
-
-	void SetInternalMoveMode(EInternalMoveMode aInternalMoveMode) { m_InternalMoveMode = aInternalMoveMode; }
-	EInternalMoveMode m_InternalMoveMode = EInternalMoveMode::IMOVE_None;
 
 	FCollisionQueryParams m_CollisionQueryParams;
 	FCollisionShape m_CapsuleCollisionShapeCache;

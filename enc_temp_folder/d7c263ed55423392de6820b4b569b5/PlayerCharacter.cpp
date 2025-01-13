@@ -124,6 +124,18 @@ void APlayerCharacter::Tick(float DeltaTime)
 void APlayerCharacter::Jump()
 {
 	Super::Jump();
+	// allows for double jump
+	//if (m_bIsInJump)
+	//{
+	//	StopJumping(); // TODO: this doesn't clear the velocity which is good, not sure if we need to add to current velocity or not
+	//}
+
+	//Jump();
+	//// TODO: cache the movement component
+	//if (UDeftMovementComponent* dComp = Cast<UDeftMovementComponent>(GetCharacterMovement()))
+	//{
+	//	if (dComp->IsInJump)
+	//}
 }
 
 // Called to bind functionality to input

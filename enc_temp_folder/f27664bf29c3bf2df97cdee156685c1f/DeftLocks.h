@@ -17,8 +17,8 @@ class SASHIMI_API DeftLocks
 		static void DecrementMoveInputRightLeftLockRef();
 
 	private:
-		static int8 m_MoveInputForwardBackLock;
-		static int8 m_MoveInputRightLeftLock;
+		static uint8 m_MoveInputForwardBackLock;
+		static uint8 m_MoveInputRightLeftLock;
 
 #if !UE_BUILD_SHIPPING
 public:

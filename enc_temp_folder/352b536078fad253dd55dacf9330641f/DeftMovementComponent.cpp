@@ -64,6 +64,11 @@ void UDeftMovementComponent::TickComponent(float aDeltaTime, enum ELevelTick aTi
 {
 	Super::TickComponent(aDeltaTime, aTickType, aThisTickFunction);
 
+	if (m_bInPlatformJump && !m_bJumpApexReached || m_bIsLedgingUp) // TODO: right now we're relying on MOVE_Falling to drive the actual physics state, but we still need to track data while in the jump to know when to change gravity
+	{
+		PhysPlatformJump(aDeltaTime);
+	}
+
 #if DEBUG_VIEW
 	DrawDebug();
 
@@ -74,7 +79,7 @@ void UDeftMovementComponent::TickComponent(float aDeltaTime, enum ELevelTick aTi
 		if (IConsoleVariable* cvar = consoleManager.FindConsoleVariable(TEXT("d.DeftLocks.UnlockAll")))
 		{
 			UE_LOG(LogTemp, Warning, TEXT("reset d.DeftLocks.UnlockAll"));
-			cvar->Set(false, EConsoleVariableFlags::ECVF_SetByConsole);
+			cvar->Set(false, ECVF_Cheat);
 			
 		}
 		else
@@ -148,13 +153,6 @@ void UDeftMovementComponent::OnMovementModeChanged(EMovementMode PreviousMovemen
 }
 
 
-void UDeftMovementComponent::OnMovementUpdated(float DeltaSeconds, const FVector& OldLocation, const FVector& OldVelocity)
-{
-	Super::OnMovementUpdated(DeltaSeconds, OldLocation, OldVelocity);
-
-	UpdateInternalMoveMode(DeltaSeconds);
-}
-
 bool UDeftMovementComponent::CanAttemptJump() const
 {
 	// TODO: other types of aerial moves should reset the jump ability like a mid air kick or dash you should be able to perform a jump after perhaps
@@ -174,7 +172,6 @@ void UDeftMovementComponent::OnJumpPressed()
 {
 	m_JumpKeyHoldTime = 0.f;
 	m_bIncrementJumpInputHoldTime = true;
-	m_bIsJumpButtonDown = true;
 }
 
 void UDeftMovementComponent::OnJumpReleased()
@@ -191,11 +188,14 @@ void UDeftMovementComponent::OnJumpReleased()
 
 		// val == 1 that means we held it max time and shouldn't change gravity at all.
 		// val == 0 means we want the min height (more gravity applied)
+		// x in [a,b] to [c,d] = (x-a) / (b-a) * (d - c) + c
+		// x		= val
+		// [a,b]	= [0,1]
+		// [c,d]	= [minJumpGrav, maxJumpGrav]
+
 		float gravityScaledByInput = (val * (m_MaxPreJumpGravityScale - m_MinPreJumpGravityScale)) + m_MinPreJumpGravityScale;
  		GravityScale = gravityScaledByInput;
 	}
-	
-	m_bIsJumpButtonDown = false;
 }
 
 
@@ -211,16 +211,20 @@ void UDeftMovementComponent::PhysFalling(float aDeltaTime, int32 aIterations)
 	}
 
 	// Only perform a ledge up if we're not already ledging up
-	if (!m_bIsLedgingUp && Velocity.Z < 0)
+	if (!m_bIsLedgingUp && (m_bJumpApexReached || Velocity.Z < 0))
 	{
 		// if velocity is negative (or we're post apex) and there is a ledge grab, grab it
 		//		currently holding a ledge and jump or (maybe) forward is pressed hop up
 		// if velocity is positive
 		//		holding jump key: hop up
+		//		not holding jump key: do nothing
+		const bool bInRangeOfLedge = FindLedge();
+		const bool bIsJumpButtonDown = m_bIncrementJumpInputHoldTime; // will be true for ETriggerEvent::Started and false for ETriggerEvent::Completed
+
 		const FVector actorLocation = CharacterOwner->GetActorLocation();
 		const FVector fwd = CharacterOwner->GetActorForwardVector();
 
-		if (FindLedge() && m_bIsJumpButtonDown && Velocity.Z < 0)
+		if (bInRangeOfLedge && bIsJumpButtonDown && !m_bIsLedgingUp)
 		{
 			// ledge up
 			//	- height = however high we need to make sure the capsule is above the ledge surface
@@ -254,10 +258,9 @@ void UDeftMovementComponent::PhysFalling(float aDeltaTime, int32 aIterations)
 			// 5. Jump
 			// this should still respect the number of jumps we've done, so if we double jumped to get to the ledge we won't be able to perform another after
 			// but if we only jumped once into a ledge up we should be able to jump again after
-			Velocity.Z = ledgeUpVelocity.Z;	// Velocity XY will be slowly updated over time rather than suddenly
+			Velocity.Z = ledgeUpVelocity.Z;
 			GravityScale = ledgeUpGravityScale;
 			m_bIsLedgingUp = true;
-			SetInternalMoveMode(EInternalMoveMode::IMOVE_LedgeUp);
 
 			if (LedgeUpFeedback)
 			{
@@ -277,37 +280,21 @@ void UDeftMovementComponent::PhysFalling(float aDeltaTime, int32 aIterations)
 	}
 }
 
-void UDeftMovementComponent::UpdateInternalMoveMode(float aDeltaTime)
+void UDeftMovementComponent::PhysPlatformJump(float aDeltaTime)
 {
-	if (m_bInPlatformJump)
-	{
-		if (!m_bJumpApexReached)// TODO: might be unnecessary
-		{
-			// Keep track of the highest point the jump reaches
-			float distanceJumped = FMath::Abs(CharacterOwner->GetActorLocation().Z - m_PlatformJumpInitialPosition.Z);
-			m_PlatformJumpApex = FMath::Max(m_PlatformJumpApex, distanceJumped);
-		}
+	// TODO: can probably pre-calculate this if we need
+	float distanceJumped = FMath::Abs(CharacterOwner->GetActorLocation().Z - m_PlatformJumpInitialPosition.Z);
+	m_PlatformJumpApex = FMath::Max(m_PlatformJumpApex, distanceJumped);
 
-		// Keep track of how long the jump input has been held
-		if (m_bIncrementJumpInputHoldTime)
-		{
-			m_JumpKeyHoldTime += aDeltaTime;
-		}
+	if (m_bIncrementJumpInputHoldTime)
+	{
+		m_JumpKeyHoldTime += aDeltaTime;
 	}
 
 	// indicates we've started falling because our velocity has switched directions or gone from pos to 0
 	if (Velocity.Z < 0.f)
 	{
 		OnJumpApexReached();
-	}
-
-	if (m_InternalMoveMode == EInternalMoveMode::IMOVE_LedgeUp)
-	{
-		// apply forward velocity over time
-		// apply minimum forward velocity so even without input player still lands on ledge
-		FVector forwardVelocity = CharacterOwner->GetActorForwardVector() * LedgeUpForwardMinBoost /*TODO: this is really the speed*/ * aDeltaTime;
-		Velocity.X += forwardVelocity.X;
-		Velocity.Y += forwardVelocity.Y;
 	}
 }
 
@@ -659,9 +646,19 @@ void UDeftMovementComponent::OnJumpApexReached()
 	m_JumpKeyHoldTime = 0.f;
 	GravityScale = m_PostJumpGravityScale;
 
-	if (m_InternalMoveMode == EInternalMoveMode::IMOVE_LedgeUp && DeftLocks::IsMoveInputForwardBackLocked())
+	// TODO this shouldn't be done exclusively on apex, it needs to be whenever we are above the surface
+	if (m_bIsLedgingUp)// TODO: move this into its own function
 	{
-		DeftLocks::DecrementMoveInputForwardBackLockRef();
+		// re-allow forward/back movement input to give the player freedom to bail from continuing the ledge up if they wish
+		//DeftLocks::DecrementMoveInputForwardBackLockRef();
+		
+		// whatever the gravity was for ledge up increase by 150% to bring us down even faster
+		//GravityScale *= 1.5f;
+
+		// apply minimum forward velocity so even without input player still lands on ledge
+		FVector forwardVelocity = CharacterOwner->GetActorForwardVector() * LedgeUpForwardMinBoost;
+		Velocity.X += forwardVelocity.X;
+		Velocity.Y += forwardVelocity.Y;
 	}
 
 #if DEBUG_VIEW
@@ -684,8 +681,6 @@ float UDeftMovementComponent::CalculateJumpGravityScale(float aTime, float aHeig
 
 void UDeftMovementComponent::ResetJump()
 {
-	m_InternalMoveMode = EInternalMoveMode::IMOVE_None;
-
 	// reset ledge up v2
 	if (m_bIsLedgingUp)
 	{

@@ -58,8 +58,6 @@ protected:
 	class UInputAction* LookAction;
 
 private:
-
-
 	bool m_bIsInJump = false;
 #if DEBUG_VIEW
 	void DrawDebug();

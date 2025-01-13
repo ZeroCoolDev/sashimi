@@ -1,14 +1,14 @@
 #include "DeftLocks.h"
 
-int8 DeftLocks::m_MoveInputForwardBackLock = 0;
+uint8 DeftLocks::m_MoveInputForwardBackLock = 0;
 bool DeftLocks::IsMoveInputForwardBackLocked() { return m_MoveInputForwardBackLock > 0; }
 void DeftLocks::IncrementMoveInputForwardBackLockRef() { ++m_MoveInputForwardBackLock; }
-void DeftLocks::DecrementMoveInputForwardBackLockRef() { m_MoveInputForwardBackLock = FMath::Max((int8)0, --m_MoveInputForwardBackLock); }
+void DeftLocks::DecrementMoveInputForwardBackLockRef() { m_MoveInputForwardBackLock = FMath::Max((uint8)0, --m_MoveInputForwardBackLock); }
 
-int8 DeftLocks::m_MoveInputRightLeftLock = 0;
+uint8 DeftLocks::m_MoveInputRightLeftLock = 0;
 bool DeftLocks::IsMoveInputRightLeftLocked() { return m_MoveInputRightLeftLock > 0; }
 void DeftLocks::IncrementMoveInputRightLeftockRef() { ++m_MoveInputRightLeftLock; }
-void DeftLocks::DecrementMoveInputRightLeftLockRef() { m_MoveInputRightLeftLock = FMath::Max((int8)0, --m_MoveInputRightLeftLock); }
+void DeftLocks::DecrementMoveInputRightLeftLockRef() { m_MoveInputRightLeftLock = FMath::Max((uint8)0, --m_MoveInputRightLeftLock); }
 
 #if !UE_BUILD_SHIPPING
 void DeftLocks::DrawLockDebug()
