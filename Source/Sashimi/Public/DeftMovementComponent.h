@@ -11,6 +11,7 @@ DECLARE_LOG_CATEGORY_EXTERN(LogDeftMovement, Log, All);
 DECLARE_LOG_CATEGORY_EXTERN(LogDeftLedge, Log, All);
 DECLARE_LOG_CATEGORY_EXTERN(LogDeftLedgeLaunchTrajectory, Log, All);
 DECLARE_LOG_CATEGORY_EXTERN(LogDeftLedgeLaunchPath, Log, All);
+DECLARE_LOG_CATEGORY_EXTERN(LogDeftAirDash, Log, All);
 
 namespace CustomMovement
 {
@@ -18,6 +19,7 @@ namespace CustomMovement
 	enum ECustomMovementMode
 	{
 		LedgeHang	UMETA(DisplayName="Ledge Hang"),
+		AirDash		UMETA(DisplayName="Air Dash"),
 		COUNT		UMETA(Hidden)
 	};
 };
@@ -26,6 +28,7 @@ enum EInternalMoveMode
 {
 	IMOVE_Jump,
 	IMOVE_LedgeUp,
+	IMOVE_AirDash,
 	IMOVE_None
 };
 
@@ -56,6 +59,8 @@ public:
 	void OnJumpPressed();
 	// Jump Input has been released
 	void OnJumpReleased();
+
+	void OnAirDash();
 
 protected:
 	virtual void PhysFalling(float aDeltaTime, int32 aIterations) override;
@@ -122,6 +127,13 @@ protected:
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Ledge Control v2 ", meta=(ToolTip="Force Feedback Effect to use for ledge up"))
 	TObjectPtr<class UForceFeedbackEffect> LedgeUpFeedback;
 
+	// Air Dash
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Air Dash", meta=(ToolTip="How far (cm) should air dashing send you"))
+	float AirDashDistance;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Air Dash", meta=(ToolTip="Time it takes (in seconds) to reach the air dash distance"))
+	float AirDashTime;
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = "Air Dash", meta=(ToolTip="(optional) vertical force for a very slight curve"))
+	float AirDashVerticalHeight;
 
 private:
 	// Jump Physics
@@ -146,6 +158,9 @@ private:
 	bool m_bIsLedgingUp;
 	float m_ledgeBoostTime;
 	float m_ledgeBoostMaxTime;
+
+	// Air Dash Physics
+	bool m_bHasAirDashed = false;
 
 	// Default Physics
 	float m_DefaultGravityZCache = 0.f;

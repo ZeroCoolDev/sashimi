@@ -25,6 +25,7 @@ DEFINE_LOG_CATEGORY(LogDeftMovement);
 DEFINE_LOG_CATEGORY(LogDeftLedge);
 DEFINE_LOG_CATEGORY(LogDeftLedgeLaunchTrajectory);
 DEFINE_LOG_CATEGORY(LogDeftLedgeLaunchPath);
+DEFINE_LOG_CATEGORY(LogDeftAirDash);
 
 UDeftMovementComponent::UDeftMovementComponent()
 {
@@ -143,6 +144,10 @@ void UDeftMovementComponent::OnMovementModeChanged(EMovementMode PreviousMovemen
 		{
 			case MOVE_Falling:
 				ResetJump();
+				break;
+			case MOVE_Walking:
+				m_bHasAirDashed = false;
+				break;
 		}
 	}
 }
@@ -198,6 +203,38 @@ void UDeftMovementComponent::OnJumpReleased()
 	m_bIsJumpButtonDown = false;
 }
 
+
+void UDeftMovementComponent::OnAirDash()
+{
+	if (IsFalling() && !m_bHasAirDashed)
+	{
+		ResetJump();
+
+		m_bHasAirDashed = true;
+		m_InternalMoveMode = IMOVE_AirDash;
+
+		const float dashSpeed = AirDashDistance / AirDashTime;
+		const FVector forwardVelocity = CharacterOwner->GetActorForwardVector() * dashSpeed;
+
+		const FVector verticalVelocity = CalculateJumpInitialVelocity(AirDashTime, AirDashVerticalHeight);
+		const float dashGravityScale = CalculateJumpGravityScale(AirDashTime, AirDashVerticalHeight);
+
+		GravityScale = dashGravityScale;
+		const FVector finalDashVelocity = FVector(forwardVelocity.X, forwardVelocity.Y, verticalVelocity.Z);
+		
+		DeftLocks::IncrementMoveInputForwardBackLockRef();
+		DeftLocks::IncrementMoveInputRightLeftockRef();
+
+		Velocity = finalDashVelocity;
+		//Launch(finalDashVelocity);
+
+		UE_VLOG(this, LogDeftAirDash, Log, TEXT("dash speed: %.2f"), dashSpeed);
+		UE_VLOG(this, LogDeftAirDash, Log, TEXT("forwardVelocity: %s"), *forwardVelocity.ToString());
+		UE_VLOG(this, LogDeftAirDash, Log, TEXT("verticalVelocity: %.2f"), verticalVelocity.Z);
+		UE_VLOG(this, LogDeftAirDash, Log, TEXT("dashGravityScale: %.2f"), dashGravityScale);
+		UE_VLOG(this, LogDeftAirDash, Log, TEXT("finalDashVelocity: %s"), *finalDashVelocity.ToString());
+	}
+}
 
 void UDeftMovementComponent::PhysFalling(float aDeltaTime, int32 aIterations)
 {
@@ -662,6 +699,12 @@ void UDeftMovementComponent::OnJumpApexReached()
 	if (m_InternalMoveMode == EInternalMoveMode::IMOVE_LedgeUp && DeftLocks::IsMoveInputForwardBackLocked())
 	{
 		DeftLocks::DecrementMoveInputForwardBackLockRef();
+	}
+
+	if (m_InternalMoveMode == EInternalMoveMode::IMOVE_AirDash)
+	{
+		DeftLocks::DecrementMoveInputForwardBackLockRef();
+		DeftLocks::DecrementMoveInputRightLeftLockRef();
 	}
 
 #if DEBUG_VIEW

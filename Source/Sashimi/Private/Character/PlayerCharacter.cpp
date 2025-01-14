@@ -111,6 +111,14 @@ void APlayerCharacter::OnJumpReleased()
 	}
 }
 
+void APlayerCharacter::AirDash()
+{
+	if (UDeftMovementComponent* deftCharacterMovementComponent = Cast<UDeftMovementComponent>(GetCharacterMovement()))
+	{
+		deftCharacterMovementComponent->OnAirDash(); // tell the movement component to stop counting the time
+	}
+}
+
 // Called every frame
 void APlayerCharacter::Tick(float DeltaTime)
 {
@@ -143,6 +151,9 @@ void APlayerCharacter::SetupPlayerInputComponent(UInputComponent* PlayerInputCom
 
 		// Look
 		inputComp->BindAction(LookAction, ETriggerEvent::Triggered, this, &APlayerCharacter::Look);
+
+		// Air Dash
+		inputComp->BindAction(AirDashAction, ETriggerEvent::Triggered, this, &APlayerCharacter::AirDash);
 	}
 }
 

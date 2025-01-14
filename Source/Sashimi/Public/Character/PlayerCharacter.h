@@ -35,6 +35,7 @@ protected:
 	void Look(const FInputActionValue& aValue);
 	void OnJumpPressed();
 	void OnJumpReleased();
+	void AirDash();
 
 protected:
 
@@ -56,6 +57,9 @@ protected:
 
 	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input)
 	class UInputAction* LookAction;
+
+	UPROPERTY(EditAnywhere, BlueprintReadOnly, Category = Input)
+	class UInputAction* AirDashAction;
 
 private:
 
