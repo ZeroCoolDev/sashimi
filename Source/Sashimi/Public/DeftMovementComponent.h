@@ -151,6 +151,8 @@ private:
 	FVector m_FallOrigin = FVector::ZeroVector;	// determines the last location we started falling from. NOTE: Only valid when in MOVE_Falling, and only set when Velocity becomes negative
 	bool m_bIsFallOriginSet = false;			// indicates whether we set the location we started truely falling from (velocity goes from pos -> neg)
 	bool m_bIsJumpButtonDown = false;
+	uint8 m_JumpInputCounter = 0;
+	uint8 m_JumpInputMax = 2;
 
 	// Ledge Physics
 	FVector m_ledgeEdgeCache;

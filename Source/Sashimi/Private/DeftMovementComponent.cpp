@@ -100,9 +100,20 @@ bool UDeftMovementComponent::DoJump(bool bReplayingMoves, float DeltaTime)
 		// Don't jump if we can't move up/down.
 		if (!bConstrainToPlane || !FMath::IsNearlyEqual(FMath::Abs(GetGravitySpaceZ(PlaneConstraintNormal)), 1.f))
 		{
-			//TODO: we don't care if we're in mid air or not, just make a function to get a different parabola if need be			
-			FVector initialVelocity = CalculateJumpInitialVelocity(TimeToJumpMaxHeight, JumpMaxHeight);
-			float gravityScale = m_MaxPreJumpGravityScale;
+			// TODO: remove this when we keep track of jump counting elsewhere
+			++m_JumpInputCounter;
+
+			float jumpTime = TimeToJumpMaxHeight;
+			float jumpHeight = JumpMaxHeight;
+			// double jumps are slightly less powerful
+			if (m_JumpInputCounter > 1)
+			{
+				jumpTime *= 0.75f;
+				jumpHeight *= 0.75f;
+			}
+			
+			FVector initialVelocity = CalculateJumpInitialVelocity(jumpTime, jumpHeight);
+			float gravityScale = CalculateJumpGravityScale(jumpTime, jumpHeight);//m_MaxPreJumpGravityScale;
 
 			Velocity.Z = initialVelocity.Z;
 			GravityScale = gravityScale;
@@ -112,10 +123,7 @@ bool UDeftMovementComponent::DoJump(bool bReplayingMoves, float DeltaTime)
 			m_bInPlatformJump = true;
 			m_bJumpApexReached = false;
 
-			// TODO: these are really debug...
-			// For now I want to combine double jumps so we see the highest apex ever, not each individual parabola
-			if (!IsAttemptingDoubleJump())
-				m_PlatformJumpInitialPosition = CharacterOwner->GetActorLocation();
+			m_PlatformJumpInitialPosition = CharacterOwner->GetActorLocation();
 			m_PlatformJumpApex = 0.f;
 
 #if DEBUG_VIEW
@@ -145,8 +153,12 @@ void UDeftMovementComponent::OnMovementModeChanged(EMovementMode PreviousMovemen
 			case MOVE_Falling:
 				ResetJump();
 				break;
+		}
+		switch (MovementMode)
+		{
 			case MOVE_Walking:
 				m_bHasAirDashed = false;
+				m_JumpInputCounter = 0;
 				break;
 		}
 	}
@@ -226,7 +238,9 @@ void UDeftMovementComponent::OnAirDash()
 		DeftLocks::IncrementMoveInputRightLeftockRef();
 
 		Velocity = finalDashVelocity;
-		//Launch(finalDashVelocity);
+		
+		// TODO: its about time we managed our own jump counter so I can reset after dashes and limit only one jump after a dash
+		// TODO: either after, or near the end of airdash we need to drastically increase the air friction so it slows back down to normal max speed
 
 		UE_VLOG(this, LogDeftAirDash, Log, TEXT("dash speed: %.2f"), dashSpeed);
 		UE_VLOG(this, LogDeftAirDash, Log, TEXT("forwardVelocity: %s"), *forwardVelocity.ToString());
@@ -852,6 +866,8 @@ void UDeftMovementComponent::DebugPlatformJump()
 	if (!GEngine)
 		return;
 
+
+	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::White, FString::Printf(TEXT("\tJumpInputCounter: %d"), m_JumpInputCounter));
 	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::White, FString::Printf(TEXT("\tJumpHoldTime: %.2f"), m_JumpKeyHoldTime));
 	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::White, FString::Printf(TEXT("\tPost Jump Gravity Scale: %.2f"), m_PostJumpGravityScale));
 	GEngine->AddOnScreenDebugMessage(-1, 0.f, FColor::White, FString::Printf(TEXT("\tMin Gravity Scale: %.2f"), m_MinPreJumpGravityScale));
@@ -866,7 +882,7 @@ void UDeftMovementComponent::DebugPlatformJump()
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, bUsePostJumpGravity ? FColor::Green : FColor::Red, FString::Printf(TEXT("Post Jump Gravity: %s"), bUsePostJumpGravity ? TEXT("Enabled") : TEXT("Disabled")));
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, m_bInPlatformJump ? FColor::Green : FColor::White, FString::Printf(TEXT("Jump State %s\nFrom %s"), m_bInPlatformJump ? TEXT("In Jump") : TEXT("Not Jumping"), IsAttemptingDoubleJump() ? TEXT("Mid Air") : TEXT("Solid Ground")));
 	GEngine->AddOnScreenDebugMessage(-1, 0.01f, FColor::Cyan, TEXT("\n-Gravity Scaled Jump-"));
-
+	
 	DebugPhysFalling();
 }
 #endif
